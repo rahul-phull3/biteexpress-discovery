@@ -1,0 +1,7 @@
+# The CSV is Latin-1 with CRLF line endings, inside quoted fields as well. Tell Git
+# to store it exactly as it is: no line-ending conversion, whatever core.autocrlf says.
+*.csv -text
+
+# Written with LF by the tool that builds it (npm run import:fixes --check compares
+# the text), so keep LF in the working tree too.
+*.json text eol=lf

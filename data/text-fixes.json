@@ -1,0 +1,622 @@
+{
+  "1461": {
+    "name": "Chawla's²"
+  },
+  "4010": {
+    "name": "Bon Appétit"
+  },
+  "4271": {
+    "name": "Häagen-Dazs"
+  },
+  "8019": {
+    "name": "Longitude 77°03' Bar - Le Meridien Gurgaon"
+  },
+  "96776": {
+    "name": "Conçu"
+  },
+  "110436": {
+    "name": "MoMo Café - Courtyard By Marriott"
+  },
+  "300688": {
+    "name": "Café Knosh - The Leela Ambience Convention Hotel"
+  },
+  "300744": {
+    "name": "Chawla's²"
+  },
+  "300815": {
+    "name": "Café 101"
+  },
+  "302535": {
+    "name": "Caffé La Poya"
+  },
+  "306476": {
+    "name": "AMPM Café & Bar"
+  },
+  "306540": {
+    "name": "Chawla's²"
+  },
+  "308246": {
+    "name": "The Village Café"
+  },
+  "308725": {
+    "name": "Chawla's²"
+  },
+  "309807": {
+    "name": "Cottage Café by Smoothie factory"
+  },
+  "309820": {
+    "name": "Döner Grill"
+  },
+  "310529": {
+    "address": "Ground Floor, JMD Kohinoor Mall, Greater Kailash (GK) 2, New Delhi"
+  },
+  "310768": {
+    "name": "High Street Café"
+  },
+  "311661": {
+    "name": "Döner Grill"
+  },
+  "312214": {
+    "name": "Café Doo Ghoont"
+  },
+  "312715": {
+    "name": "Chawla's²"
+  },
+  "801684": {
+    "name": "Chemistry Café"
+  },
+  "1402314": {
+    "name": "Hobnob Gourmet Cafébar"
+  },
+  "2100849": {
+    "name": "Café Riverrun"
+  },
+  "3200537": {
+    "name": "Freshco - The Health Café"
+  },
+  "3300416": {
+    "name": "NESCAFÉ Illusions"
+  },
+  "5901782": {
+    "address": "Bebek Mahallesi, Cevdetpaşa Caddesi, No 30/A, Beşiktaş, İstanbul",
+    "city": "İstanbul"
+  },
+  "5902117": {
+    "address": "Türkali Mahallesi, Ihlamurdere Caddesi, No 40/B, Beşiktaş, İstanbul",
+    "city": "İstanbul",
+    "locality": "Beşiktaş Merkez"
+  },
+  "5904116": {
+    "address": "Asmalımescit Mahallesi, İstiklal Caddesi, Emir Nevruz Sokak, No 2/H, Beyoğlu, İstanbul",
+    "city": "İstanbul",
+    "locality": "Asmalımescit"
+  },
+  "5905215": {
+    "name": "Emirgan Sütiş",
+    "address": "Emirgan Mahallesi, Sakıp Sabancı Caddesi, No 46, Sarıyer, İstanbul",
+    "city": "İstanbul",
+    "locality": "Emirgân"
+  },
+  "5908749": {
+    "name": "Ceviz Ağacı",
+    "address": "Koşuyolu Mahallesi, Muhittin Üstündağ Caddesi, No 85, Kadıköy, İstanbul",
+    "city": "İstanbul",
+    "locality": "Koşuyolu"
+  },
+  "5915054": {
+    "address": "Kemankeş Karamustafa Paşa Mahallesi, Kılıç Ali Paşa Mescidi Sokak, No 12/A, Beyoğlu, İstanbul",
+    "city": "İstanbul",
+    "locality": "Karaköy"
+  },
+  "5915547": {
+    "name": "Karaköy Güllüoğlu",
+    "address": "Kemankeş Karamustafa Paşa Mahallesi, Rıhtım Caddesi, Katlı Otopark Altı, No 4, Beyoğlu, İstanbul",
+    "city": "İstanbul",
+    "locality": "Karaköy"
+  },
+  "5915730": {
+    "name": "Namlı Gurme",
+    "address": "Kemankeş Karamustafa Paşa Mahallesi, Rıhtım Caddesi, No 1/1, Katlı Otopark Altı, Beyoğlu, İstanbul",
+    "city": "İstanbul",
+    "locality": "Karaköy"
+  },
+  "5915807": {
+    "address": "Kuruçeşme Mahallesi, Muallim Naci Caddesi, No 56, Beşiktaş, İstanbul",
+    "city": "İstanbul",
+    "locality": "Kuruçeşme"
+  },
+  "5916085": {
+    "name": "Dem Karaköy",
+    "address": "Kemankeş Karamustafa Paşa Mahallesi, Hoca Tahsin Sokak, No 17, Beyoğlu, İstanbul",
+    "city": "İstanbul",
+    "locality": "Karaköy"
+  },
+  "5916112": {
+    "name": "Aşşk Kahve",
+    "address": "Kuruçeşme Mahallesi, Muallim Naci Caddesi, No 64/B, Beşiktaş, İstanbul",
+    "city": "İstanbul",
+    "locality": "Kuruçeşme"
+  },
+  "5926979": {
+    "name": "Leman Kültür",
+    "address": "Caferağa Mahallesi, Neşet Ömer Sokak, No 9/A, Kadıköy, İstanbul",
+    "city": "İstanbul",
+    "locality": "Kadıköy Merkez"
+  },
+  "5927248": {
+    "address": "Caddebostan Mahallesi, Bağdat Caddesi, No 349, Kat 1, Kadıköy, İstanbul",
+    "city": "İstanbul"
+  },
+  "5927402": {
+    "address": "Cafeağa Mahallesi, Bademaltı Sokak, No 21/B, Kadıköy, İstanbul",
+    "city": "İstanbul"
+  },
+  "6000019": {
+    "address": "Gaziosmanpaşa Mahallesi, Şehit Ömer Haluk Sipahioğlu Sokak, No 8, Çankaya, Ankara",
+    "locality": "Gazi Osman Paşa"
+  },
+  "6000168": {
+    "name": "Hattena Hatay Sofrası",
+    "address": "Balgat Mahallesi, Osmanlı Caddesi, No 41/A, Çankaya, Ankara"
+  },
+  "6000409": {
+    "address": "Gaziosmanpaşa Mahallesi, Arjantin Caddesi, No 19, Çankaya, Ankara",
+    "locality": "Gazi Osman Paşa"
+  },
+  "6000447": {
+    "name": "Masabaşı Kebapçısı",
+    "address": "Balgat Mahallesi, Ziyabey Caddesi, No 35, Çankaya, Ankara"
+  },
+  "6000549": {
+    "name": "Meşhur Tavacı Recep Usta",
+    "address": "Güzeltepe Mahallesi, Dikmen Vadisi, Hoşdere Girişi, Çankaya, Ankara"
+  },
+  "6000747": {
+    "address": "Mahallesi, Selanik 2 Caddesi, No 61/A, Çankaya, Ankara",
+    "locality": "Kızılay"
+  },
+  "6000871": {
+    "name": "Çukurağa Sofrası",
+    "address": "Emek Mahallesi, Bosna Hersek Caddesi, No 22/C, Çankaya, Ankara"
+  },
+  "6000921": {
+    "name": "Düveroğlu",
+    "address": "Ümitköy Mahallesi, 2432. Cadde (8. Cadde), No 113, Çankaya, Ankara",
+    "locality": "Ümitköy"
+  },
+  "6001537": {
+    "address": "Remzi Oğuz Arık Mahallesi, Tunalı Hilmi Caddesi, Bülten Sokak, No 5, Çankaya, Ankara",
+    "locality": "Kavaklıdere"
+  },
+  "6001748": {
+    "name": "Meşhur Özçelik Aspava",
+    "address": "Küçük Esat Mahallesi, Esat Caddesi, No 110/C, Çankaya, Ankara",
+    "locality": "Küçük Esat"
+  },
+  "6001757": {
+    "name": "Yıldız Aspava",
+    "address": "Küçük Esat Mahallesi, Esat Caddesi, No 110/25, Çankaya, Ankara",
+    "locality": "Küçük Esat"
+  },
+  "6001980": {
+    "address": "Armada AVM, Kat -1, Eskişehir Yolu, No 6, Yenimahalle, Ankara",
+    "locality": "Armada AVM, Söğütözü, Yenimahalle"
+  },
+  "6002025": {
+    "name": "Masabaşı",
+    "address": "Kocatepe Mahallesi, Mithatpaşa Caddesi, No 62/A, Çankaya, Ankara",
+    "locality": "Kızılay"
+  },
+  "6003426": {
+    "address": "Çukurambar Mahallesi, Muhsin Yazıcıoğlu Caddesi, No 3, Çankaya, Ankara",
+    "locality": "Çukurambar"
+  },
+  "6003668": {
+    "address": "Kentpark AVM, Kat -1, Mustafa Kemal Mahallesi, Eskişehir Yolu 7.km, No 164, Çankaya, Ankara",
+    "locality": "Kentpark AVM, Üniversiteler, Çankaya"
+  },
+  "6003879": {
+    "address": "Macun Mahallesi, Erciyes İşyerleri Sitesi, 201. Cadde, No 6, Yenimahalle, Ankara",
+    "locality": "Macunköy"
+  },
+  "6004011": {
+    "address": "Gazi Osman Paşa Mahallesi, Filistin Caddesi, No 21, Çankaya, Ankara",
+    "locality": "Gazi Osman Paşa"
+  },
+  "6004089": {
+    "name": "Düveroğlu",
+    "address": "Maltepe Mahallesi, Gençlik Caddesi, No 28, Çankaya, Ankara"
+  },
+  "6004408": {
+    "address": "Mutlukent Mahallesi, 1944. Cadde, 1948. Sokak, No 15, Çankaya, Ankara",
+    "locality": "Çayyolu"
+  },
+  "6004813": {
+    "name": "Pizza İl Forno",
+    "address": "Yıldızevler Mahallesi, 720. Sokak, No 2/B, Çankaya, Ankara",
+    "locality": "Yıldızevler"
+  },
+  "6402163": {
+    "name": "Grand Café & Beach"
+  },
+  "6508117": {
+    "name": "Sautéed Stories"
+  },
+  "6600060": {
+    "name": "Sandubas Café",
+    "address": "Edifício José Severo, SCS 6, Bloco A, Loja 99, Asa Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6600083": {
+    "address": "CLS 115, Bloco A, Loja 2, Asa Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6600116": {
+    "address": "Shopping Iguatemi - piso 1, SHIN CA 4, Lote A, Lago Norte, Brasília",
+    "city": "Brasília"
+  },
+  "6600214": {
+    "address": "CLS 109, Bloco A, Loja 2/6, Asa Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6600292": {
+    "address": "SCLN 210, Bloco D, Loja 36/48, Asa Norte, Brasília",
+    "city": "Brasília"
+  },
+  "6600379": {
+    "address": "SCS 213, Bloco C, Loja 35, Asa Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6600427": {
+    "address": "SCES, Trecho 2, Conjunto 13/36, Setor de Clubes Esportivos Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6600441": {
+    "address": "CLN 110, Bloco D, Loja 28, Asa Norte, Brasília",
+    "city": "Brasília"
+  },
+  "6600681": {
+    "address": "SCLN, 208, Bloco A, Loja 30, Asa Norte, Brasília",
+    "city": "Brasília"
+  },
+  "6600970": {
+    "name": "Pizza à Bessa",
+    "address": "SCS 214, Bloco C, Loja 40, Asa Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6601005": {
+    "name": "Café Daniel Briand",
+    "address": "SCLN 104, Bloco A, Loja 26, Asa Norte, Brasília",
+    "city": "Brasília"
+  },
+  "6601158": {
+    "name": "Manzuá",
+    "address": "Pontão Lago Sul, SHIS 10, Lote 9, Lago Sul, Brasília",
+    "city": "Brasília",
+    "locality": "Pontão Lago Sul, Lago Sul"
+  },
+  "6601218": {
+    "address": "SCS 212, Bloco B, Loja 26, Asa Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6601361": {
+    "address": "Avenida Araucárias, 1325, Loja 19, Águas Claras, Brasília",
+    "city": "Brasília",
+    "locality": "Águas Claras"
+  },
+  "6601457": {
+    "address": "CLSN 301, Bloco C, Loja 86, Sudoeste, Brasília",
+    "city": "Brasília"
+  },
+  "6601515": {
+    "address": "Rua 13 Norte, Lote 4, Águas Claras, Brasília",
+    "city": "Brasília",
+    "locality": "Águas Claras"
+  },
+  "6601589": {
+    "address": "Brasília Shopping - Piso 2, SCN 5, Bloco A, Asa Norte, Brasília",
+    "city": "Brasília",
+    "locality": "Brasília Shopping, Asa Norte"
+  },
+  "6601595": {
+    "address": "ParkShopping - Piso 2, SAI/SO, Área 6580, Guará I, Brasília",
+    "city": "Brasília",
+    "locality": "ParkShopping, Guará I"
+  },
+  "6601602": {
+    "address": "Vila Malls, Avenida das Castanheiras, Lote 1060, Ãguas Claras, Brasília",
+    "city": "Brasília",
+    "locality": "Águas Claras"
+  },
+  "6601862": {
+    "name": "Taypá",
+    "address": "Fashion Park, Shis Ql 17, Bloco G, Loja 208, Lago Sul, Brasília",
+    "city": "Brasília"
+  },
+  "6700402": {
+    "address": "Rua Haddock Lobo, 1240, Cerqueira César, Jardim Paulista, São Paulo",
+    "city": "São Paulo"
+  },
+  "6700475": {
+    "address": "Hotel Unique, Avenida Brigadeiro Luís Antônio, 4700, Jardim Paulista, São Paulo",
+    "city": "São Paulo"
+  },
+  "6700846": {
+    "address": "Alameda Lorena, 300, Jardim Paulista, São Paulo",
+    "city": "São Paulo"
+  },
+  "6701257": {
+    "address": "Rua dos Pinheiros, 320, Pinheiros, São Paulo",
+    "city": "São Paulo"
+  },
+  "6701419": {
+    "name": "Divino Fogão",
+    "address": "Shopping Metrô Santa Cruz - Piso L2, Rua Domingos de Morais, 2564, Vila Mariana, São Paulo",
+    "city": "São Paulo",
+    "locality": "Shopping Metrô Santa Cruz, Vila Mariana"
+  },
+  "6702159": {
+    "address": "Rua Haddock Lobo, 1738, Cerqueira César, Jardim Paulista, São Paulo 10000",
+    "city": "São Paulo"
+  },
+  "6702797": {
+    "address": "Rua Antônio Carlos, 268, Consolação, São Paulo",
+    "city": "São Paulo",
+    "locality": "Consolação"
+  },
+  "6703176": {
+    "address": "Rua Conceição Veloso, 56, Vila Mariana, São Paulo",
+    "city": "São Paulo"
+  },
+  "6703956": {
+    "address": "Shopping Morumbi - Piso Lazer, Avenida Roque Petroni Júnior, 1089, Santo Amaro, São Paulo",
+    "city": "São Paulo"
+  },
+  "6704326": {
+    "address": "Rua Treze de Maio, 668, Bela Vista, São Paulo 01327000",
+    "city": "São Paulo"
+  },
+  "6705858": {
+    "name": "Terraço Itália",
+    "address": "Edifício Itália - 41° Andar, Avenida Ipiranga, 344, República, São Paulo",
+    "city": "São Paulo",
+    "locality": "República"
+  },
+  "6706211": {
+    "address": "Praça Dom José Gaspar, 42, República, São Paulo 10000",
+    "city": "São Paulo",
+    "locality": "República"
+  },
+  "6706313": {
+    "address": "Rua Avanhandava, 81, Bela Vista, São Paulo 10000",
+    "city": "São Paulo"
+  },
+  "6709580": {
+    "name": "Esquina Mocotó",
+    "address": "Avenida Nossa Senhora do Loreto, 1104, Vila Medeiros, Vila Maria, São Paulo",
+    "city": "São Paulo"
+  },
+  "6710645": {
+    "address": "Rua Pedroso Alvarenga, 522, Itaim Bibi, São Paulo, SP",
+    "city": "São Paulo"
+  },
+  "6711179": {
+    "address": "Rua Antonio Carlos, 429, Consolação, São Paulo",
+    "city": "São Paulo",
+    "locality": "Consolação"
+  },
+  "6711666": {
+    "address": "Rua Jacques Félix, 405, Vila Nova Conceição, Moema, São Paulo",
+    "city": "São Paulo"
+  },
+  "6713413": {
+    "address": "Rua Jesuíno Arruda, 470, Itaim Bibi, São Paulo",
+    "city": "São Paulo"
+  },
+  "6713772": {
+    "address": "Rua Dom João Batista da Costa, 70, Vila Sônia, São Paulo",
+    "city": "São Paulo",
+    "locality": "Vila Sônia"
+  },
+  "6714340": {
+    "address": "Rua Tabapuã, 1417, Itaim Bibi, São Paulo",
+    "city": "São Paulo"
+  },
+  "7000992": {
+    "name": "Eden Noodles Cafe 四川担担面"
+  },
+  "7300483": {
+    "name": "Zazá Bistrô Tropical",
+    "address": "Rua Joana Angélica, 40, Ipanema, Rio de Janeiro"
+  },
+  "7300521": {
+    "address": "Rua Aníbal de Mendonça, 37, Ipanema, Rio de Janeiro"
+  },
+  "7300955": {
+    "name": "Braseiro da Gávea",
+    "address": "Praça Santos Dumont, 116, Gávea, Rio de Janeiro",
+    "locality": "Gávea"
+  },
+  "7301064": {
+    "name": "Filé de Ouro",
+    "address": "Rua Jardim Botânico, 731, Jardim Botânico, Lagoa, Rio de Janeiro"
+  },
+  "7301700": {
+    "address": "Avenida João Alves, 56, Urca, Rio de Janeiro"
+  },
+  "7302859": {
+    "address": "Rua Barão de Iguatemi, 379, Tijuca, Rio de Janeiro"
+  },
+  "7302898": {
+    "name": "Aprazível",
+    "address": "Rua Aprazível, 62, Santa Teresa, Rio de Janeiro"
+  },
+  "7303219": {
+    "address": "Praia da Barra da Tijuca, Avenida Lúcio Costa, Ilha 25, Barra da Tijuca, Rio de Janeiro"
+  },
+  "7304307": {
+    "address": "Rua Gonçalves Dias, 32, Centro, Rio de Janeiro"
+  },
+  "7304312": {
+    "address": "Le Monde, Bloco 3, Lojas A/B, Avenida das Américas, 3500, Barra da Tijuca, Rio de Janeiro"
+  },
+  "17057925": {
+    "name": "Café Tu Tu Tango"
+  },
+  "17059012": {
+    "name": "Hollerbach's Willow Tree Café"
+  },
+  "17061237": {
+    "name": "Cevíche Tapas Bar & Restaurant"
+  },
+  "17977796": {
+    "name": "Gallery Café - Hyatt Place"
+  },
+  "18107851": {
+    "name": "Delhite Pâtisserie"
+  },
+  "18232108": {
+    "name": "Döner Grill"
+  },
+  "18233621": {
+    "name": "Caffé La Poya"
+  },
+  "18238246": {
+    "name": "It’s Sinful"
+  },
+  "18241862": {
+    "name": "The Junkyard Café"
+  },
+  "18250288": {
+    "name": "Café Bogchi"
+  },
+  "18255141": {
+    "name": "Chawla's²"
+  },
+  "18255160": {
+    "name": "More Than Café"
+  },
+  "18258484": {
+    "name": "Phonebooth Café"
+  },
+  "18264717": {
+    "name": "Café Gramophone"
+  },
+  "18264995": {
+    "name": "buéno"
+  },
+  "18273622": {
+    "name": "TBH – To Be Healthy"
+  },
+  "18277165": {
+    "name": "Ping's Café Orient"
+  },
+  "18287389": {
+    "name": "Rosarté Chocolate"
+  },
+  "18306523": {
+    "name": "Café MRP"
+  },
+  "18311928": {
+    "name": "Elixir Health Café"
+  },
+  "18312984": {
+    "name": "Sahib’s Barbeque by Ohri’s"
+  },
+  "18317511": {
+    "name": "#Urban Café"
+  },
+  "18322609": {
+    "name": "Remember Me Café"
+  },
+  "18337772": {
+    "address": "Level 2, Food Capital, Worldmark 1, Aerocity, New Delhi"
+  },
+  "18337917": {
+    "name": "Queens Café"
+  },
+  "18337924": {
+    "name": "The Fashion Street Café"
+  },
+  "18349916": {
+    "name": "Superstar Café"
+  },
+  "18349929": {
+    "address": "SH-161, Garden Galleria, Sector 38, Noida"
+  },
+  "18350118": {
+    "name": "Dialogue Lounge & Café"
+  },
+  "18354631": {
+    "name": "Café Burger BC"
+  },
+  "18364239": {
+    "name": "Cafè Befikre"
+  },
+  "18368002": {
+    "name": "Tin Town Café"
+  },
+  "18369780": {
+    "name": "Café Foreground"
+  },
+  "18371395": {
+    "name": "The Chickmunks Café"
+  },
+  "18371402": {
+    "address": "Atrium Café, Ground Floor, Logix City Centre, Sector 32, Near Sector 31, Noida"
+  },
+  "18371428": {
+    "name": "Theyसी"
+  },
+  "18381626": {
+    "name": "4 Barrels Café & Lounge"
+  },
+  "18381663": {
+    "address": "Lower Ground Floor, FC­8, Epicuria, Nehru Place, New Delhi"
+  },
+  "18384506": {
+    "name": "The Basement Café"
+  },
+  "18391166": {
+    "name": "Chawla's²"
+  },
+  "18396855": {
+    "name": "The Walled City - Café & Lounge"
+  },
+  "18420426": {
+    "name": "Westéross"
+  },
+  "18421026": {
+    "name": "Hearken Café"
+  },
+  "18431193": {
+    "name": "KBC²"
+  },
+  "18432226": {
+    "name": "buéno"
+  },
+  "18432940": {
+    "name": "LaBonté"
+  },
+  "18434596": {
+    "name": "Café Healthilicious"
+  },
+  "18435305": {
+    "name": "Chhalava - छLava"
+  },
+  "18439721": {
+    "name": "Chef's Basket Pop Up Café"
+  },
+  "18446082": {
+    "name": "Café Kitchen"
+  },
+  "18456744": {
+    "name": "Arabian & Turkish Café"
+  },
+  "18460280": {
+    "name": "M Crème"
+  },
+  "18478389": {
+    "name": "Die Bäckerei"
+  }
+}

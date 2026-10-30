@@ -1,0 +1,4 @@
+# The unzipped take-home archive: zomato.csv, file1.json ... file5.json and the
+# country-code workbook. The JSON dumps are about 55 MB and every record in them
+# carries a Zomato API key, so nothing in this folder is ever committed.
+/full/
