@@ -1,11 +1,15 @@
 import { envSchema } from './env.schema';
 
+const defaults = {
+  NODE_ENV: 'development',
+  PORT: 3000,
+  MONGODB_URI: 'mongodb://127.0.0.1:27017/?directConnection=true',
+  MONGODB_DB: 'biteexpress',
+};
+
 describe('envSchema', () => {
   it('applies the defaults when nothing is set', () => {
-    expect(envSchema.parse({})).toEqual({
-      NODE_ENV: 'development',
-      PORT: 3000,
-    });
+    expect(envSchema.parse({})).toEqual(defaults);
   });
 
   it('coerces PORT from a string', () => {
@@ -23,10 +27,40 @@ describe('envSchema', () => {
     expect(envSchema.safeParse({ NODE_ENV: 'staging' }).success).toBe(false);
   });
 
+  it('accepts mongodb and mongodb+srv connection strings', () => {
+    const local = 'mongodb://user:pass@db:27017/?directConnection=true';
+    const atlas = 'mongodb+srv://user:pass@cluster0.example.mongodb.net/';
+    expect(envSchema.parse({ MONGODB_URI: local }).MONGODB_URI).toBe(local);
+    expect(envSchema.parse({ MONGODB_URI: atlas }).MONGODB_URI).toBe(atlas);
+  });
+
+  it('rejects a connection string that is empty or uses another scheme', () => {
+    expect(envSchema.safeParse({ MONGODB_URI: '' }).success).toBe(false);
+    expect(
+      envSchema.safeParse({ MONGODB_URI: 'localhost:27017' }).success,
+    ).toBe(false);
+    expect(
+      envSchema.safeParse({ MONGODB_URI: 'postgres://localhost/db' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects database names that MongoDB or Atlas would refuse', () => {
+    expect(envSchema.safeParse({ MONGODB_DB: '' }).success).toBe(false);
+    expect(envSchema.safeParse({ MONGODB_DB: 'bite.express' }).success).toBe(
+      false,
+    );
+    expect(envSchema.safeParse({ MONGODB_DB: 'bite express' }).success).toBe(
+      false,
+    );
+    expect(envSchema.safeParse({ MONGODB_DB: 'x'.repeat(39) }).success).toBe(
+      false,
+    );
+    expect(envSchema.safeParse({ MONGODB_DB: 'x'.repeat(38) }).success).toBe(
+      true,
+    );
+  });
+
   it('ignores variables it does not declare', () => {
-    expect(envSchema.parse({ PATH: '/usr/bin' })).toEqual({
-      NODE_ENV: 'development',
-      PORT: 3000,
-    });
+    expect(envSchema.parse({ PATH: '/usr/bin' })).toEqual(defaults);
   });
 });

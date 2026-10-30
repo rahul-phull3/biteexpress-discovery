@@ -1,0 +1,63 @@
+# Local stack for the BiteExpress discovery API.
+#
+#   Everyday development (database in Docker, API on your machine):
+#     npm run db:up        = docker compose up -d --wait --wait-timeout 180 mongodb
+#     npm run start:dev
+#
+#   Whole stack in containers (demo):
+#     npm run stack:up     = docker compose up -d --build --wait --wait-timeout 300
+#
+# Full task guide: docs/RUNBOOK.md
+name: biteexpress
+
+services:
+  mongodb:
+    # MongoDB Community plus the Atlas Search process (mongot) in one image, so
+    # $search behaves locally the way it does on Atlas. "8.0" follows the latest
+    # 8.0 build. Once it works for you, pin the exact build you tested:
+    #   docker image inspect mongodb/mongodb-atlas-local:8.0 --format "{{index .RepoDigests 0}}"
+    # prints repository@sha256:<digest>. Keep the tag for readability and add the digest:
+    #   image: mongodb/mongodb-atlas-local:8.0@sha256:<digest>
+    image: mongodb/mongodb-atlas-local:8.0
+    # The image builds a one-node replica set under this hostname, so keep it.
+    # Other containers reach the database as "mongodb".
+    hostname: mongodb
+    environment:
+      DO_NOT_TRACK: "1" # opt out of the image's usage telemetry
+    ports:
+      # Bound to 127.0.0.1 so this database, which has no password, is not
+      # reachable from your network. Change the left-hand port with MONGO_PORT
+      # in .env if 27017 is taken (and change MONGODB_URI to match).
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+      - mongot-data:/data/mongot
+      # Helper scripts for `npm run db:inspect` and `npm run db:validator-demo`.
+      # Read-only, so nothing in the container can change your files.
+      - ./scripts/mongosh:/scripts:ro
+    restart: unless-stopped
+    # No healthcheck is declared on purpose. The image ships its own, which
+    # waits for both mongod and the search process. `--wait` and `depends_on`
+    # below use it.
+
+  api:
+    build: .
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Container-to-container address. directConnection=true because the
+      # database is a one-node replica set.
+      MONGODB_URI: mongodb://mongodb:27017/?directConnection=true
+      MONGODB_DB: ${MONGODB_DB:-biteexpress}
+    ports:
+      - "127.0.0.1:${API_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+  mongo-config:
+  mongot-data:

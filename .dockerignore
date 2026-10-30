@@ -1,0 +1,17 @@
+# Keep the build context small and keep secrets and local state out of images.
+node_modules
+dist
+coverage
+.git
+.env
+.env.*
+!.env.example
+*.log
+# Data files are mounted into the importer container, never baked into the API image.
+data
+docs
+test
+scripts
+Dockerfile
+.dockerignore
+docker-compose.yml

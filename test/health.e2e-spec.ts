@@ -1,20 +1,15 @@
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/app.setup';
 import type { HealthResponse } from '../src/health/health.controller';
+import { FakeDb } from './support/fake-db';
+import { createAppWithFakeMongo } from './support/test-app';
 
 describe('GET /health (e2e)', () => {
   let app: INestApplication;
+  const mongo = new FakeDb();
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    configureApp(app);
-    await app.init();
+    app = await createAppWithFakeMongo(mongo);
   });
 
   afterAll(async () => {
@@ -29,6 +24,12 @@ describe('GET /health (e2e)', () => {
     expect(Number.isInteger(body.uptimeSeconds)).toBe(true);
     expect(Number.isNaN(Date.parse(body.timestamp))).toBe(false);
     expect(res.headers['cache-control']).toBe('no-store');
+  });
+
+  it('never touches MongoDB, so a database outage cannot get the container restarted', async () => {
+    await request(app.getHttpServer()).get('/health').expect(200);
+
+    expect(mongo.calls).toEqual([]);
   });
 
   it('is not served under the /v1 prefix', async () => {

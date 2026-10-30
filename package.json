@@ -2,7 +2,6 @@
   "name": "biteexpress-discovery",
   "version": "0.1.0",
   "description": "BiteExpress restaurant discovery API: NestJS on MongoDB",
-  "author": "rahul.phull@gmail.com",
   "private": true,
   "license": "UNLICENSED",
   "engines": {
@@ -21,13 +20,24 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:int": "jest --config ./test/jest-int.json",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:e2e",
+    "db:up": "docker compose up -d --wait --wait-timeout 180 mongodb",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v",
+    "db:logs": "docker compose logs -f mongodb",
+    "db:shell": "docker compose exec mongodb mongosh biteexpress",
+    "db:inspect": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/inspect.js",
+    "db:validator-demo": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/validator-demo.js",
+    "stack:up": "docker compose up -d --build --wait --wait-timeout 300"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.0",
     "@nestjs/config": "^12.0.0",
     "@nestjs/core": "^12.0.0",
     "@nestjs/platform-express": "^12.0.0",
+    "mongodb": "^7.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "zod": "^4.0.0"
