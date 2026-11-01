@@ -1,7 +1,14 @@
 import { STATUS_CODES } from 'node:http';
+import { QueryTimeoutError } from '../database/query-timeout.error';
 
 /** Media type of an RFC 9457 error document. */
 export const PROBLEM_JSON = 'application/problem+json';
+
+/**
+ * What a client is told to wait after a read ran past its time limit. A blip
+ * clears quickly, and a longer wait would only stretch an outage.
+ */
+const RETRY_AFTER_SECONDS = 1;
 
 /**
  * Stable names for the kinds of problem this API reports, so a client can
@@ -13,6 +20,8 @@ export const ProblemType = {
   NotFound: '/problems/not-found',
   Conflict: '/problems/conflict',
   Internal: '/problems/internal-error',
+  /** The database did not answer within the time limit of a read. Try again. */
+  Unavailable: '/problems/service-unavailable',
   /** RFC 9457's default: the problem means nothing beyond its HTTP status. */
   Generic: 'about:blank',
 } as const;
@@ -156,8 +165,11 @@ export interface ErrorContext {
 
 /** What the exception filter should send. */
 export type ErrorResponse =
-  /** An RFC 9457 document, sent as application/problem+json. */
-  | { kind: 'problem'; problem: Problem }
+  /**
+   * An RFC 9457 document, sent as application/problem+json, with the headers
+   * it needs (Retry-After on a 503). `headers` is absent when there are none.
+   */
+  | { kind: 'problem'; problem: Problem; headers?: Record<string, string> }
   /** A body that the code which threw shaped on purpose (the /ready report), sent untouched. */
   | { kind: 'custom'; status: number; body: object };
 
@@ -200,6 +212,8 @@ function statusText(status: number): string {
  * Decides what the client is told about a failure.
  *
  *  - Our own ProblemException: sent as it is.
+ *  - A database read that ran past its time limit (QueryTimeoutError): a 503
+ *    problem with Retry-After. Nothing about the database is revealed.
  *  - A Nest HttpException with Nest's standard body (a message, such as "Cannot
  *    GET /x" or a malformed-JSON message): turned into a problem.
  *  - A Nest HttpException whose author shaped the body (GET /ready throws one
@@ -214,6 +228,19 @@ export function toErrorResponse(
 ): ErrorResponse {
   if (exception instanceof ProblemException) {
     return problemResponse(exception.problem, context);
+  }
+
+  if (exception instanceof QueryTimeoutError) {
+    return problemResponse(
+      {
+        type: ProblemType.Unavailable,
+        title: 'Service Unavailable',
+        status: 503,
+        detail: 'The database did not answer in time. Try again in a moment.',
+      },
+      context,
+      { 'Retry-After': String(RETRY_AFTER_SECONDS) },
+    );
   }
 
   if (isHttpExceptionLike(exception)) {
@@ -271,6 +298,7 @@ function genericProblem(
 function problemResponse(
   problem: Omit<Problem, 'instance' | 'requestId'>,
   context: ErrorContext,
+  headers?: Record<string, string>,
 ): ErrorResponse {
   return {
     kind: 'problem',
@@ -279,6 +307,7 @@ function problemResponse(
       ...(context.instance ? { instance: context.instance } : {}),
       ...(context.requestId ? { requestId: context.requestId } : {}),
     },
+    ...(headers ? { headers } : {}),
   };
 }
 

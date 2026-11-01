@@ -56,6 +56,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     response.setHeader('Content-Type', PROBLEM_JSON);
     // An error must never be cached as if it were the resource.
     response.setHeader('Cache-Control', 'no-store');
+    // Headers the problem needs, such as Retry-After on a 503.
+    for (const [name, value] of Object.entries(result.headers ?? {})) {
+      response.setHeader(name, value);
+    }
     response.status(result.problem.status).json(result.problem);
   }
 }

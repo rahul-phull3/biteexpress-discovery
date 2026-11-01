@@ -7,6 +7,8 @@ coverage
 .env.*
 !.env.example
 *.log
+*.tsbuildinfo
+.scannerwork
 # Data files are mounted into the importer container, never baked into the API image.
 data
 docs
@@ -14,4 +16,5 @@ test
 scripts
 Dockerfile
 .dockerignore
-docker-compose.yml
+docker-compose*.yml
+sonar-project.properties

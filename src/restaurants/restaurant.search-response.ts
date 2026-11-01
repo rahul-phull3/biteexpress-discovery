@@ -18,6 +18,14 @@ export interface SearchInterpretation {
   overridden: string[];
   /** What was assumed, ignored or cannot be answered, in plain words. */
   notes: string[];
+  /**
+   * How the leftover words were matched. Present only when the search tried
+   * Atlas Search for them: `atlas` when it answered; `rules` with `degraded:
+   * true` when it could not (its index is not ready, or the call failed) and the
+   * words were matched as plain text instead. Absent when the sentence left no
+   * words, or when Atlas Search is switched off (SEARCH_ENGINE=rules).
+   */
+  textSearch?: { engine: 'atlas' | 'rules'; degraded: boolean };
 }
 
 /** The answer of GET /v1/restaurants/search: a listing, and how its sentence was read. */

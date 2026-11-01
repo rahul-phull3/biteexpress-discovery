@@ -1,4 +1,4 @@
-import type { Document } from 'mongodb';
+import { type Document, ObjectId } from 'mongodb';
 import type { ListCriteria } from './list-criteria';
 import {
   buildFilter,
@@ -72,6 +72,28 @@ describe('buildFilter', () => {
 
   it('adds no clause for an empty list of words', () => {
     expect(filterOf({ textWords: [] })).toEqual({ tenantId: 't1', status: 'active' });
+  });
+
+  it('limits the query to the restaurants that Atlas Search named, as ObjectIds', () => {
+    const ids = ['a'.repeat(24), 'b'.repeat(24)];
+
+    expect(filterOf({ candidateIds: ids })).toEqual({
+      tenantId: 't1',
+      status: 'active',
+      _id: { $in: ids.map((id) => new ObjectId(id)) },
+    });
+  });
+
+  it('matches nothing for an empty list of candidates, which is not the same as no list', () => {
+    expect(filterOf({ candidateIds: [] })._id).toEqual({ $in: [] });
+    expect(filterOf({})._id).toBeUndefined();
+  });
+
+  it('keeps the other filters beside the candidates', () => {
+    const filter = filterOf({ candidateIds: ['a'.repeat(24)], city: 'Gurgaon', minRating: 4 });
+
+    expect(filter).toMatchObject({ 'address.city': 'Gurgaon', 'rating.average': { $gte: 4 } });
+    expect(filter._id).toEqual({ $in: [new ObjectId('a'.repeat(24))] });
   });
 
   it('asks for at least the minimum average rating', () => {
@@ -264,6 +286,13 @@ describe('buildMongoListQuery with a point', () => {
 
     expect(geoNear.query.tenantId).toBe('t1');
     expect(geoNear.query.$and).toHaveLength(2);
+  });
+
+  it('applies the candidates of Atlas Search inside $geoNear too', () => {
+    const geoNear = pipelineOf({ candidateIds: ['a'.repeat(24)] })[0]?.$geoNear as Document;
+
+    expect(geoNear.query.tenantId).toBe('t1');
+    expect(geoNear.query._id).toEqual({ $in: [new ObjectId('a'.repeat(24))] });
   });
 });
 

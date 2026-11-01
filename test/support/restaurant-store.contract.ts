@@ -359,13 +359,20 @@ export function describeRestaurantListContract(
       // one of another tenant, both exactly at P.
       const atP = { location: { type: 'Point' as const, coordinates: [P.longitude, P.latitude] as [number, number] } };
       const excellent = { average: 5, votes: 10000, label: 'Excellent', score: 4.9 };
-      await store.insert(
-        aRestaurantDocument(tenant, { name: 'Closed Place', status: 'inactive', rating: excellent, ...atP }),
-      );
-      await store.insert(
-        aRestaurantDocument(freshTenant('neighbour'), { name: 'Neighbour Dosa', rating: excellent, ...atP }),
-      );
+      ids.closed = (
+        await store.insert(
+          aRestaurantDocument(tenant, { name: 'Closed Place', status: 'inactive', rating: excellent, ...atP }),
+        )
+      ).id;
+      ids.neighbour = (
+        await store.insert(
+          aRestaurantDocument(freshTenant('neighbour'), { name: 'Neighbour Dosa', rating: excellent, ...atP }),
+        )
+      ).id;
     });
+
+    /** The stored ids of these fixture restaurants, as Atlas Search would name them. */
+    const idsOf = (...keys: Array<Key | 'closed' | 'neighbour'>): string[] => keys.map((key) => ids[key] ?? '');
 
     describe('which restaurants it lists', () => {
       it("lists the tenant's active restaurants only", async () => {
@@ -436,6 +443,31 @@ export function describeRestaurantListContract(
 
       it('does not filter when the list of words is empty', async () => {
         expect(await names({ textWords: [] })).toHaveLength(12);
+      });
+
+      it('lists only the candidates that Atlas Search named, in the order of the listing, not of the candidates', async () => {
+        // R9 is named first, but the listing is best first: R1, then R8 and R9, which tie.
+        expect(await names({ candidateIds: idsOf('R9', 'R1', 'R8') })).toEqual(inOrder('R1', 'R8', 'R9'));
+        expect(await names({ candidateIds: idsOf('R5') })).toEqual(inOrder('R5'));
+      });
+
+      it('lists nothing when Atlas Search named nothing, which is not the same as naming no one', async () => {
+        expect(await names({ candidateIds: [] })).toEqual([]);
+        expect(await names({})).toHaveLength(12);
+      });
+
+      it('still applies every other filter to the candidates', async () => {
+        const candidates = idsOf('R1', 'R2', 'R3', 'R7');
+
+        expect(await names({ candidateIds: candidates, city: 'Gurgaon' })).toEqual(inOrder('R1', 'R2', 'R3'));
+        expect(await names({ candidateIds: candidates, cuisines: ['Chinese'] })).toEqual(inOrder('R2'));
+        expect(await names({ candidateIds: candidates, maxCost: 700, currency: 'INR' })).toEqual(inOrder('R1', 'R2'));
+      });
+
+      it('never shows an inactive restaurant, another tenant\'s restaurant or an unknown id, even when named', async () => {
+        const named = [...idsOf('closed', 'neighbour', 'R1'), 'f'.repeat(24)];
+
+        expect(await names({ candidateIds: named })).toEqual(inOrder('R1'));
       });
 
       it('matches any of several cuisines by default', async () => {
@@ -664,6 +696,25 @@ export function describeRestaurantListContract(
         // A word that only the locality has.
         const golf = await list({ near, sort: 'distance', order: 'asc', textWords: ['golf'] });
         expect(namesOf(golf)).toEqual(inOrder('R4'));
+      });
+
+      it('applies the candidates that Atlas Search named to the restaurants around the point', async () => {
+        const result = await list({
+          near: { ...P, radiusKm: 25 },
+          candidateIds: idsOf('R7', 'R3', 'R1', 'R2'),
+          sort: 'distance',
+          order: 'asc',
+        });
+        expect(namesOf(result)).toEqual(inOrder('R1', 'R2', 'R3', 'R7'));
+
+        // R4 is 5 km away, but nobody named it.
+        const narrower = await list({
+          near: { ...P, radiusKm: 25 },
+          candidateIds: idsOf('R3', 'R9'),
+          sort: 'distance',
+          order: 'asc',
+        });
+        expect(namesOf(narrower)).toEqual(inOrder('R3'));
       });
 
       it('can order the restaurants around the point some other way and still report the distance', async () => {

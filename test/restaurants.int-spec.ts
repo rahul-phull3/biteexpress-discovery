@@ -129,6 +129,8 @@ describe('the listing queries on real data', () => {
       ['a part of a name', { nameContains: 'place 1' }],
       ['search words in the name or area', { textWords: ['place', '1'] }],
       ['search words and a city', { city: 'Gurgaon', textWords: ['place'] }],
+      ['the candidates of Atlas Search', { candidateIds: ['a'.repeat(24), 'b'.repeat(24)] }],
+      ['the candidates of Atlas Search and a city', { city: 'Gurgaon', candidateIds: ['a'.repeat(24)] }],
       ['a price filter', { currency: 'INR', maxCost: 900 }],
       ['the cheapest first', { sort: 'cost', order: 'asc' }],
       ['by name', { sort: 'name', order: 'asc' }],
@@ -156,6 +158,20 @@ describe('the listing queries on real data', () => {
 
       const plan = await planOf(
         buildMongoListQuery(tenant, criteria({ near, sort: 'distance', order: 'asc', textWords: ['place', '1'] })),
+      );
+
+      expect(plan).toContain('tenant_location_2dsphere');
+      expect(plan).not.toContain('COLLSCAN');
+    });
+
+    it('nearest first with the candidates of Atlas Search uses the 2dsphere index too', async () => {
+      const near = { latitude: 28.4595, longitude: 77.0266 };
+
+      const plan = await planOf(
+        buildMongoListQuery(
+          tenant,
+          criteria({ near, sort: 'distance', order: 'asc', candidateIds: ['a'.repeat(24), 'b'.repeat(24)] }),
+        ),
       );
 
       expect(plan).toContain('tenant_location_2dsphere');

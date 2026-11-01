@@ -4,10 +4,16 @@ import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
 import { MONGO_CLIENT, MONGO_DB } from '../../src/database/database.constants';
 import { SchemaBootstrapService } from '../../src/database/schema-bootstrap.service';
+import { setupApiDocs } from '../../src/docs/api-docs';
 import {
   RESTAURANT_STORE,
   type RestaurantStore,
 } from '../../src/restaurants/restaurant.store';
+import {
+  RulesTextSearch,
+  TEXT_SEARCH,
+  type TextSearch,
+} from '../../src/restaurants/text-search';
 import type { FakeDb } from './fake-db';
 
 export interface TestAppOptions {
@@ -17,6 +23,13 @@ export interface TestAppOptions {
    * FakeDb, which only knows the startup and readiness calls.
    */
   restaurantStore?: RestaurantStore;
+  /** Serves the Swagger UI and the OpenAPI document, as main.ts does when DOCS_ENABLED. */
+  docs?: boolean;
+  /**
+   * How the leftover words of a sentence are matched. Without it the plain
+   * rules, because Atlas Search needs a real MongoDB with its search process.
+   */
+  textSearch?: TextSearch;
 }
 
 /**
@@ -37,7 +50,9 @@ export async function createAppWithFakeMongo(
     .overrideProvider(MONGO_DB)
     .useValue(fake.asDb())
     .overrideProvider(SchemaBootstrapService)
-    .useValue({});
+    .useValue({})
+    .overrideProvider(TEXT_SEARCH)
+    .useValue(options.textSearch ?? new RulesTextSearch());
 
   if (options.restaurantStore) {
     builder = builder
@@ -48,6 +63,8 @@ export async function createAppWithFakeMongo(
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication({ logger: false });
   configureApp(app);
+  // Before init(): Nest installs its 404 handler then, and a route added after it is never reached.
+  if (options.docs) setupApiDocs(app);
   await app.init();
   return app;
 }

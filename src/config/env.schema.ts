@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_READ_TIMEOUT_MS } from '../database/read-limits';
 
 /**
  * A tenant id is stored on every restaurant and leads every index. Letters,
@@ -9,9 +10,10 @@ export const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Single source of truth for configuration. ConfigModule validates the
- * environment (process.env plus .env) against this schema when the app boots,
- * so a bad value stops the process immediately instead of failing later.
- * Coercion and defaults apply to what ConfigService returns.
+ * environment (process.env plus .env) against this schema when the app boots
+ * (through validateEnv below), so a bad value stops the process immediately
+ * instead of failing later. Coercion and defaults apply to what ConfigService
+ * returns.
  *
  * The importer reads the same schema, so `npm run import` and the API agree on
  * the database and the tenant.
@@ -51,6 +53,46 @@ export const envSchema = z.object({
       'use 1 to 64 letters, digits, underscores or hyphens',
     )
     .default('biteexpress'),
+
+  // The time limit of every MongoDB read, in milliseconds (maxTimeMS). A read
+  // that runs longer is stopped by the server and answered with a 503 and a
+  // Retry-After header. Below 100 ms a healthy query could fail; above a
+  // minute the limit protects nothing.
+  READ_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(60_000)
+    .default(DEFAULT_READ_TIMEOUT_MS),
+
+  // How the leftover words of a search sentence ("vada pav") are matched.
+  // atlas: with Atlas Search (typo tolerant), falling back to rules when the
+  //        search index is not ready, and saying so in the answer.
+  // rules: always by plain text matching on the name and the area.
+  SEARCH_ENGINE: z.enum(['atlas', 'rules']).default('atlas'),
+
+  // Serve the Swagger UI at /docs and the OpenAPI document at
+  // /docs/openapi.json. Turn it off for a deployment that is public.
+  DOCS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/**
+ * What ConfigModule calls with the raw environment. Returns the validated
+ * values (defaults applied, numbers as numbers), or throws one error that
+ * names every variable that is wrong.
+ */
+export function validateEnv(config: Record<string, unknown>): Env {
+  const result = envSchema.safeParse(config);
+  if (result.success) return result.data;
+
+  const problems = result.error.issues.map(
+    (issue) =>
+      `  ${issue.path.map(String).join('.') || '(environment)'}: ${issue.message}`,
+  );
+  throw new Error(`Invalid configuration:\n${problems.join('\n')}`);
+}

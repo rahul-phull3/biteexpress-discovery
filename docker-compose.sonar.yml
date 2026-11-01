@@ -1,0 +1,46 @@
+# SonarQube (static analysis) for this repository. Separate from docker-compose.yml, so
+# the demo stack stays small. It needs about 3 GB of free memory.
+#
+#   npm run sonar:up      starts SonarQube; the first start takes 1 to 2 minutes
+#                         http://localhost:9000  (log in as admin / admin, then set a new password)
+#   Create a token:       My Account > Security > Generate Tokens; put it in .env as SONAR_TOKEN=...
+#   npm run sonar:scan    runs the unit tests with coverage, then the scanner; open the project
+#                         at http://localhost:9000/dashboard?id=biteexpress-discovery
+#   npm run sonar:down    stops it (the analysis history stays in the volumes below)
+#
+# Settings of the analysis are in sonar-project.properties. Steps: docs/RUNBOOK.md.
+name: biteexpress-sonar
+
+services:
+  sonarqube:
+    image: sonarqube:community
+    ports:
+      # 127.0.0.1 only: the default admin / admin login must not be reachable from the network.
+      - "127.0.0.1:${SONAR_PORT:-9000}:9000"
+    environment:
+      # Local use only. Without it SonarQube's search engine demands a host kernel setting
+      # (vm.max_map_count) that Docker Desktop does not let you change.
+      SONAR_SEARCH_JAVAADDITIONALOPTS: -Dnode.store.allow_mmap=false
+    volumes:
+      - sonar-data:/opt/sonarqube/data
+      - sonar-extensions:/opt/sonarqube/extensions
+      - sonar-logs:/opt/sonarqube/logs
+    restart: unless-stopped
+
+  # `npm run sonar:scan` runs this one-off job. The project folder is mounted at /usr/src,
+  # where the scanner looks for sonar-project.properties.
+  scanner:
+    profiles: ["scan"]
+    image: sonarsource/sonar-scanner-cli:latest
+    depends_on:
+      - sonarqube
+    environment:
+      SONAR_HOST_URL: http://sonarqube:9000
+      SONAR_TOKEN: ${SONAR_TOKEN:-}
+    volumes:
+      - .:/usr/src
+
+volumes:
+  sonar-data:
+  sonar-extensions:
+  sonar-logs:

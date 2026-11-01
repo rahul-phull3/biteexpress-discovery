@@ -1,16 +1,18 @@
-# Local stack for the BiteExpress discovery API.
+# The stack for the BiteExpress discovery API: MongoDB (with Atlas Search) and the API.
+#
+#   Whole stack, one command (builds the API image, starts MongoDB, waits until both are healthy):
+#     npm run stack:up     = docker compose up -d --build --wait --wait-timeout 300
+#     npm run stack:down   = docker compose down
 #
 #   Everyday development (database in Docker, API on your machine):
 #     npm run db:up        = docker compose up -d --wait --wait-timeout 180 mongodb
 #     npm run start:dev
 #
-#   Whole stack in containers (demo):
-#     npm run stack:up     = docker compose up -d --build --wait --wait-timeout 300
-#
 #   Load the restaurants (a one-off job, not part of `up`):
 #     npm run import       on your machine (everyday)
 #     npm run db:import    in a container (see the importer service below)
 #
+# On a cloud host: docs/RUNBOOK.md, "Deploy to a cloud host".
 # Full task guide: docs/RUNBOOK.md
 name: biteexpress
 
@@ -47,6 +49,8 @@ services:
 
   api:
     build: .
+    # A tiny init process as PID 1: it passes SIGTERM on and reaps child processes.
+    init: true
     depends_on:
       mongodb:
         condition: service_healthy
@@ -58,8 +62,13 @@ services:
       MONGODB_URI: mongodb://mongodb:27017/?directConnection=true
       MONGODB_DB: ${MONGODB_DB:-biteexpress}
       DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-biteexpress}
+      READ_TIMEOUT_MS: ${READ_TIMEOUT_MS:-2000}
+      SEARCH_ENGINE: ${SEARCH_ENGINE:-atlas}
+      DOCS_ENABLED: ${DOCS_ENABLED:-true}
     ports:
-      - "127.0.0.1:${API_PORT:-3000}:3000"
+      # 127.0.0.1 by default: the demo is for this machine only. On a cloud VM set
+      # API_BIND=0.0.0.0 and put a reverse proxy with TLS in front of it.
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-3000}:3000"
     restart: unless-stopped
 
   # One-off job that loads the restaurants. The "tools" profile keeps it out of

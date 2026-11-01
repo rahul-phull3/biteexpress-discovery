@@ -1,4 +1,4 @@
-import { envSchema } from './env.schema';
+import { envSchema, validateEnv } from './env.schema';
 
 const defaults = {
   NODE_ENV: 'development',
@@ -6,6 +6,9 @@ const defaults = {
   MONGODB_URI: 'mongodb://127.0.0.1:27017/?directConnection=true',
   MONGODB_DB: 'biteexpress',
   DEFAULT_TENANT_ID: 'biteexpress',
+  READ_TIMEOUT_MS: 2000,
+  SEARCH_ENGINE: 'atlas',
+  DOCS_ENABLED: true,
 };
 
 describe('envSchema', () => {
@@ -85,5 +88,54 @@ describe('envSchema', () => {
 
   it('ignores variables it does not declare', () => {
     expect(envSchema.parse({ PATH: '/usr/bin' })).toEqual(defaults);
+  });
+
+  it('limits a read to 2 seconds unless told otherwise, and coerces the number', () => {
+    expect(envSchema.parse({}).READ_TIMEOUT_MS).toBe(2000);
+    expect(envSchema.parse({ READ_TIMEOUT_MS: '500' }).READ_TIMEOUT_MS).toBe(500);
+  });
+
+  it('rejects a read limit that would fail healthy queries, protect nothing, or is not a whole number', () => {
+    for (const value of ['', '0', '99', '60001', '1.5', 'soon', '-1']) {
+      expect(envSchema.safeParse({ READ_TIMEOUT_MS: value }).success).toBe(false);
+    }
+    expect(envSchema.safeParse({ READ_TIMEOUT_MS: '100' }).success).toBe(true);
+    expect(envSchema.safeParse({ READ_TIMEOUT_MS: '60000' }).success).toBe(true);
+  });
+
+  it('uses Atlas Search for sentences unless rules are asked for', () => {
+    expect(envSchema.parse({}).SEARCH_ENGINE).toBe('atlas');
+    expect(envSchema.parse({ SEARCH_ENGINE: 'rules' }).SEARCH_ENGINE).toBe('rules');
+    expect(envSchema.safeParse({ SEARCH_ENGINE: 'elastic' }).success).toBe(false);
+    expect(envSchema.safeParse({ SEARCH_ENGINE: '' }).success).toBe(false);
+  });
+
+  it('turns the docs switch into a boolean and refuses any other spelling', () => {
+    expect(envSchema.parse({}).DOCS_ENABLED).toBe(true);
+    expect(envSchema.parse({ DOCS_ENABLED: 'true' }).DOCS_ENABLED).toBe(true);
+    expect(envSchema.parse({ DOCS_ENABLED: 'false' }).DOCS_ENABLED).toBe(false);
+    // "false" must never be read as a truthy string.
+    for (const value of ['', '0', 'no', 'FALSE', 'yes']) {
+      expect(envSchema.safeParse({ DOCS_ENABLED: value }).success).toBe(false);
+    }
+  });
+});
+
+describe('validateEnv', () => {
+  it('returns the validated values with the defaults applied', () => {
+    expect(validateEnv({ PORT: '8080', PATH: '/usr/bin' })).toEqual({
+      ...defaults,
+      PORT: 8080,
+    });
+  });
+
+  it('throws one error that names every variable that is wrong', () => {
+    const attempt = () =>
+      validateEnv({ PORT: 'abc', MONGODB_DB: 'bite.express', READ_TIMEOUT_MS: '5' });
+
+    expect(attempt).toThrow(/^Invalid configuration:/);
+    expect(attempt).toThrow(/PORT:/);
+    expect(attempt).toThrow(/MONGODB_DB:/);
+    expect(attempt).toThrow(/READ_TIMEOUT_MS:/);
   });
 });

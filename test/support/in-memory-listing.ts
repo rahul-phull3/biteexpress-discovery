@@ -51,8 +51,10 @@ const SORT_VALUE = {
   name: (doc: RestaurantDocument): Value => doc.name,
 } as const;
 
-function matches(doc: RestaurantDocument, tenantId: string, c: ListCriteria): boolean {
+function matches({ id, doc }: StoredRestaurant, tenantId: string, c: ListCriteria): boolean {
   if (doc.tenantId !== tenantId || doc.status !== 'active') return false;
+  // The restaurants that Atlas Search chose; an empty list chooses none.
+  if (c.candidateIds !== undefined && !c.candidateIds.includes(id)) return false;
   if (c.city !== undefined && doc.address.city !== c.city) return false;
   if (c.countryCode !== undefined && doc.address.country.code !== c.countryCode) return false;
   if (c.nameContains !== undefined && !doc.name.toLowerCase().includes(c.nameContains.toLowerCase())) {
@@ -153,7 +155,7 @@ export function listFrom(rows: StoredRestaurant[], tenantId: string, c: ListCrit
   }
 
   let candidates: Candidate[] = rows
-    .filter((row) => matches(row.doc, tenantId, c))
+    .filter((row) => matches(row, tenantId, c))
     .map((row) => ({ row }));
 
   if (c.near) {

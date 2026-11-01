@@ -1,4 +1,4 @@
-import type { Document } from 'mongodb';
+import { type Document, ObjectId } from 'mongodb';
 import { escapeRegex } from './escape-regex';
 import type { ListCriteria } from './list-criteria';
 import { defaultOrder, type ListSort } from './list-sort';
@@ -71,6 +71,11 @@ export function buildFilter(tenantId: string, criteria: ListCriteria): Document 
       const contains = { $regex: escapeRegex(word), $options: 'i' };
       return { $or: [{ name: contains }, { 'address.locality': contains }] };
     });
+  }
+  if (criteria.candidateIds !== undefined) {
+    // Atlas Search already chose these; every other filter still applies to them.
+    // An empty list is an empty $in, which matches nothing.
+    filter._id = { $in: criteria.candidateIds.map((id) => new ObjectId(id)) };
   }
   if (criteria.minRating !== undefined) filter['rating.average'] = { $gte: criteria.minRating };
 

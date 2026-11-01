@@ -21,3 +21,10 @@ try {
 
 const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 process.env.MONGODB_DB = `biteexpress_it_${suffix}`;
+
+// 3. The words of a sentence are matched by the plain rules here, whatever .env
+//    says. Atlas Search indexes a new restaurant a moment after it was written,
+//    which would make every "create it, then search for it" test flaky. The one
+//    test that exercises Atlas Search builds its own AtlasTextSearch and waits
+//    for the index (test/atlas-text-search.int-spec.ts).
+process.env.SEARCH_ENGINE = 'rules';

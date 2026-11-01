@@ -30,7 +30,12 @@ commands work the same in any shell. For the overview and the quick start, see
 | Follow the database log | `npm run db:logs` |
 | Stop everything, keep the data | `npm run db:down` |
 | Delete all local data and start clean | `npm run db:reset` |
-| Run the API and the database both in Docker | `npm run stack:up` |
+| Run the API and the database both in Docker (one command) | `npm run stack:up` |
+| Stop that stack | `npm run stack:down` |
+| Read the API contract, or try a call (Swagger UI, section 3.17) | open `http://localhost:3000/docs` |
+| Run the unit tests with a coverage report | `npm run test:cov` |
+| Start SonarQube, then analyse the code (section 3.18) | `npm run sonar:up`, then `npm run sonar:scan` |
+| Put the API on a cloud host (section 3.19) | `docker compose up -d --build --wait` on a VM, or the image plus an Atlas cluster |
 | Clean the sample and print the report, without touching the database | `npm run import:dry` |
 | Load the sample (500 restaurants) | `npm run import` |
 | Load the full dataset (9,551 restaurants) | `npm run import -- --file data/full/zomato.csv` |
@@ -39,7 +44,7 @@ commands work the same in any shell. For the overview and the quick start, see
 
 ## 1. What you need
 
-- Node.js 24.9 or newer: `node --version`.
+- Node.js 22.12 or newer (the `.nvmrc` says 22): `node --version`. Jest runs as plain `jest`, so no Node flag is needed.
 - Docker Desktop, started and showing "Engine running": `docker compose version`.
 - Free ports 27017 (MongoDB) and 3000 (API). Section 3.10 explains how to change them.
 - About 2 GB of free memory for the database container. It runs MongoDB and the
@@ -50,50 +55,42 @@ commands work the same in any shell. For the overview and the quick start, see
 ## 2. First-time setup
 
 Run these in the repository root (the folder that contains `package.json`).
-Commit your Step 1 work first, so that `git status` afterwards shows only what
-Step 2 changed.
 
 ```powershell
-# 1. Unzip the Step 2 files over the repository
-Expand-Archive -Path "$HOME\Downloads\step2-overlay.zip" -DestinationPath . -Force
+# 1. Get the code
+git clone https://github.com/rahul-phull3/biteexpress-discovery.git
+cd biteexpress-discovery
 
-# 2. Review what changed. package.json should differ only by the mongodb
-#    dependency and the new scripts.
-git status
-git diff package.json
+# 2. Use Node 22 (the .nvmrc says 22). Skip this if `node --version` already shows 22.12 or newer.
+nvm use 22
 
-# 3. Install the new dependency (this also updates package-lock.json: commit it)
+# 3. Install the dependencies
 npm install
 
 # 4. Optional: create your local settings. Every value in .env.example is also
 #    the built-in default, so you only need a .env to change something.
 Copy-Item .env.example .env
 
-# 5. Start MongoDB, then the API
+# 5. Check the code. No database is needed: lint, type-check, unit tests and HTTP tests.
+npm run check
+
+# 6. Start MongoDB, load the 500-restaurant sample, then the API
 npm run db:up
+npm run import
 npm run start:dev
 ```
 
 `.env` must stay out of Git. If `git status` lists it, add it to `.gitignore`.
 
-Later steps are applied the same way. Step 3 adds the importer, the data files
-and one dependency (`csv-parse`):
-
-```powershell
-Expand-Archive -Path "$HOME\Downloads\step3-overlay.zip" -DestinationPath . -Force
-git status
-git diff package.json      # should show csv-parse and the four import scripts, nothing else
-npm install                # updates package-lock.json: commit it
-npm run check              # lint, type-check, unit and HTTP tests
-```
+`package-lock.json` pins every dependency. The Docker image installs with `npm ci`,
+which refuses a lockfile that is out of step with `package.json`, so whenever you
+change a dependency, run `npm install` and commit the new lockfile.
 
 `data/.gitignore` keeps the unzipped archive (`data/full/`) out of Git. Nothing
 else in `data/` is ignored: the sample and `text-fixes.json` are committed.
 
-Steps 4 and 5 (create and fetch, then list) add no dependency. Apply them the same
-way (`step4-overlay.zip`, then `step5-overlay.zip`) and run `npm run check`.
-Step 5 changes `package.json` by one script (`db:explain`) and adds one index,
-`tenant_score`, which the API creates the next time it starts.
+To run the API and MongoDB in Docker instead, with no Node on your machine, use
+section 3.9.
 
 ## 3. Everyday tasks
 
@@ -137,6 +134,7 @@ On a first start against an empty database you should see log lines like these
 LOG [SchemaBootstrapService] Created collection "restaurants" with its $jsonSchema validator
 LOG [SchemaBootstrapService] Indexes in place: tenant_location_2dsphere, tenant_city_score, tenant_city_cuisine_score, tenant_score, tenant_source_unique
 LOG [SchemaBootstrapService] Search index "restaurants_search" requested; it builds in the background
+LOG [Bootstrap] API documentation at /docs
 LOG [NestApplication] Nest application successfully started
 ```
 
@@ -196,6 +194,8 @@ While MongoDB is down, the `/ready` error typically reads `ping timed out after
 "not ready" (a load balancer stops sending traffic) without making it "not
 alive" (an orchestrator does not restart a healthy process in a loop).
 
+The Swagger UI is at `http://localhost:3000/docs` (section 3.17).
+
 ### 3.4 Look inside the database
 
 ```powershell
@@ -248,13 +248,18 @@ and acceptance for a valid restaurant and for one with an extra field.
 
 | Command | Needs | What it proves |
 | --- | --- | --- |
-| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator. For the restaurant API: the request schemas, the error format, the service, the listing rules (query parameters, the MongoDB query builder, the lists of cities and cuisines), the reader of search sentences (about 180 tests on phrases alone) and its merge with the parameters, and the contract checks run on the in-memory store |
-| `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes; creating, fetching, listing and searching restaurants (the three questions of the brief, a sentence together with parameters, the headers), and the error answer of every refusal |
-| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice. For the restaurant API: the contract checks again on the MongoDB store, the listing queries on 60 real documents (no `COLLSCAN`, the geo index used, distances right), the plans of the searches with words, the three questions of the brief answered from real data, and create, fetch, list and search over HTTP on a real database |
+| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator. For the restaurant API: the request schemas, the error format, the service, the listing rules (query parameters, the MongoDB query builder, the lists of cities and cuisines), the reader of search sentences (about 180 tests on phrases alone) and its merge with the parameters, the Atlas Search query (checked against the index definition) and its fallback, the time limit on every read and the `503` it becomes, the OpenAPI document against the Zod schemas, and the contract checks run on the in-memory store |
+| `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes; creating, fetching, listing and searching restaurants (the three questions of the brief, a sentence together with parameters, the headers), the error answer of every refusal, the Swagger UI and the OpenAPI files, and every documented answer checked against the document (status, headers, body), including the `503` of a slow read |
+| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice. For the restaurant API: the contract checks again on the MongoDB store, the listing queries on 60 real documents (no `COLLSCAN`, the geo index used, distances right), the plans of the searches with words, the three questions of the brief answered from real data, create, fetch, list and search over HTTP on a real database, and Atlas Search on the real search process (`test/atlas-text-search.int-spec.ts`: every word, the start of a word, one typo, the area, and never an inactive restaurant or another tenant's) |
 | `npm run check` | nothing | Lint, type-check, `npm test` and `npm run test:e2e`, stopping at the first failure |
+| `npm run test:cov` | nothing | The unit tests with a coverage report: a table in the terminal, and `coverage/lcov-report/index.html` to open |
+| `npm run sonar:scan` | `npm run sonar:up` and a token | The same coverage, and static analysis, in SonarQube (section 3.18) |
 
 `npm run test:int` creates a throwaway database named `biteexpress_it_<random>`
-and drops it when it finishes, so the data in `biteexpress` is never touched.
+and drops it when it finishes, so the data in `biteexpress` is never touched. The
+integration tests run with `SEARCH_ENGINE=rules` (set in `test/support/int-env.ts`),
+so only `test/atlas-text-search.int-spec.ts` depends on the search process; it waits
+up to 90 seconds for the search index to become queryable.
 
 Run less than everything:
 
@@ -267,7 +272,7 @@ npm run test:cov                                           # unit tests with a c
 ```
 
 Other quality commands: `npm run lint` (oxlint), `npm run typecheck` (tsc, no
-output files), `npm run format` (Prettier rewrites files).
+output files), `npm run format` (Prettier rewrites files), `npm run test:debug` (Jest paused for a debugger).
 
 Suggested sequence before every commit:
 
@@ -302,12 +307,15 @@ exists with a different definition" after you changed an index.
 
 ### 3.9 Run everything in containers (demo mode)
 
+One command builds the API image and starts MongoDB and the API together:
+
 ```powershell
-npm run stack:up       # builds the API image, starts MongoDB and the API, waits until both are healthy
+npm run stack:up       # docker compose up -d --build --wait: MongoDB first, then the API; waits until both are healthy
 docker compose ps
 curl.exe -i http://localhost:3000/ready
 docker compose logs -f api
-npm run db:down        # stops both
+npm run db:import      # load the 500-restaurant sample from a container (a one-off job)
+npm run stack:down     # stops both; the data stays in the volumes (npm run db:down does the same)
 ```
 
 Run `npm run stack:up` again after changing code: it rebuilds the image. Do not
@@ -320,6 +328,11 @@ The two modes differ only in where the API runs and so how it reaches MongoDB:
 | --- | --- | --- |
 | Everyday (3.1 and 3.2) | on your machine | `mongodb://127.0.0.1:27017/?directConnection=true` |
 | Demo (3.9) | in a container | `mongodb://mongodb:27017/?directConnection=true` (set in `docker-compose.yml`) |
+
+The API container takes `MONGODB_DB`, `DEFAULT_TENANT_ID`, `READ_TIMEOUT_MS`,
+`SEARCH_ENGINE` and `DOCS_ENABLED` from your `.env` (or the shell), with the same
+defaults as everywhere else. The image itself holds no settings and no secrets, which
+is what lets it run on a cloud host (section 3.19).
 
 ### 3.10 Change a setting, or use Atlas instead of Docker
 
@@ -334,8 +347,13 @@ with a message naming the setting.
 | `MONGODB_URI` | `mongodb://127.0.0.1:27017/?directConnection=true` | Connection string. Starts with `mongodb://` or `mongodb+srv://` |
 | `MONGODB_DB` | `biteexpress` | Database name: 1 to 38 letters, digits, `_` or `-` |
 | `DEFAULT_TENANT_ID` | `biteexpress` | The tenant that owns the imported restaurants: 1 to 64 letters, digits, `_` or `-`. `npm run import -- --tenant <id>` overrides it for one run |
+| `READ_TIMEOUT_MS` | `2000` | The time limit of every MongoDB read, 100 to 60000 milliseconds. A read that runs longer is stopped by the server and answered `503` with `Retry-After: 1` (DECISIONS D22) |
+| `SEARCH_ENGINE` | `atlas` | How the leftover words of a sentence are matched: `atlas` (Atlas Search, with the plain rules as the fallback) or `rules` (plain text, always) |
+| `DOCS_ENABLED` | `true` | `true` or `false`: serve the Swagger UI and the OpenAPI files at `/docs`. Use `false` on a public deployment |
 | `MONGO_PORT` | `27017` | Docker Compose only: the port published on your machine for MongoDB |
 | `API_PORT` | `3000` | Docker Compose only: the port published on your machine for the API container |
+| `API_BIND` | `127.0.0.1` | Docker Compose only: the address the API port is published on. `0.0.0.0` on a cloud VM, with a proxy in front |
+| `SONAR_PORT`, `SONAR_TOKEN` | `9000`, empty | `docker-compose.sonar.yml` only: the SonarQube port, and the token that `npm run sonar:scan` uses (section 3.18) |
 
 If you change `MONGO_PORT`, change the port inside `MONGODB_URI` to match. If
 you change `MONGODB_DB`, note that `npm run db:shell` and `npm run db:inspect`
@@ -381,7 +399,7 @@ source id (the unique index `tenant_source_unique`), so a second run finds every
 restaurant and updates it in place: no duplicates, `createdAt` stays, `updatedAt`
 moves to the new run.
 
-**Load the full dataset and check it** (this is the "done when" of Step 3):
+**Load the full dataset and check it:**
 
 1. Unzip the take-home archive into `data/full/`, so that
    `data/full/zomato.csv` exists. Confirm Git ignores it:
@@ -775,255 +793,7 @@ text, so a MongoDB operator never reaches the database.
 
 **Check the answers against MongoDB itself**
 
-```powershell
-npm run db:shell
-# then, inside mongosh:
-db.restaurants.countDocuments({ tenantId: "biteexpress", "address.city": "Gurgaon", cuisines: "South Indian" })
-# 1 with the sample, 70 with the full dataset
-db.restaurants.countDocuments({ tenantId: "biteexpress", "address.city": "Gurgaon", "cost.currency": "INR", "cost.forTwo": { $lte: 999 } })
-# 35 with the sample; the API above shows the same restaurants, 20 to a page
-```
-
-**Check that every listing query uses an index**
-
-```powershell
-npm run db:explain
-```
-
-It asks MongoDB how it would run eighteen queries: twelve typical listings (two
-of them with the words of a search sentence), four "near me" searches (one of
-them with words) and the two that read the lists of cities and cuisines. It
-prints one entry for each. Look for `PASS` on every entry and `Result: PASS` at
-the end. This is the layout (the plan names are what matter; the keys read,
-documents read and milliseconds depend on your data and machine):
-
-```text
-Tenant "biteexpress", 500 restaurants.
-
-PASS  a city, best first
-        plan:     LIMIT > FETCH > IXSCAN(tenant_city_score)
-        returned: 21   keys read: 21   documents read: 21   1 ms
-PASS  nearest first
-        plan:     GEO_NEAR_2DSPHERE(tenant_location_2dsphere)
-        returned: 21   keys read: 21   documents read: 21   1 ms
-...
-Result: PASS (no query scans the whole collection)
-```
-
-A `FAIL` line means that query would read the whole collection (a `COLLSCAN`):
-an index is missing or was dropped. Restart the API (startup recreates the
-indexes) and run it again. `npm run test:int` runs the same check on the real
-queries, so a regression fails the tests before it reaches you.
-
-This check says nothing about how the plans behave with millions of restaurants;
-that needs its own measurement. One shape is expected to sort in memory: a city
-plus a cuisine reads that city's matching restaurants and sorts them, which at
-9,551 restaurants is a few dozen rows.
-
-### 3.16 Search restaurants with a sentence
-
-`GET /v1/restaurants/search` does everything the list does (section 3.15: the
-same parameters, the same page, the same order rules, the same refusals) and
-also takes a sentence in `q`. These are the three examples of the brief:
-
-- "Best restaurants in Gurgaon with South Indian Food"
-- "Restaurants in Gurgaon under Rs. 1000 for two"
-- "Nearest place that serves Vada Pav"
-
-The sentence is read by fixed rules, not by a language model (section 8 says
-why), and every answer says how it was read, so nothing is guessed in silence.
-
-Start the API and load the restaurants first (`npm run import`). This helper
-sends a sentence, prints how it was read, then the restaurants; define it once
-per PowerShell window:
-
-```powershell
-$search = "http://localhost:3000/v1/restaurants/search"
-$cyberHub = "&lat=28.495&lng=77.089"
-function Search-Restaurants($sentence, $point = "") {
-  $answer = curl.exe -s ("${search}?q=" + [uri]::EscapeDataString($sentence) + $point) | ConvertFrom-Json
-  if (-not $answer.interpretation) { $answer | ConvertTo-Json -Depth 5; return }   # a refusal: show it as it is
-  "Read as: " + $answer.interpretation.summary
-  $answer.interpretation.notes | ForEach-Object { "Note:    " + $_ }
-  $answer.data | Format-Table name, locality, city, averageRating, votes, costForTwo, currency, distanceKm -AutoSize
-}
-```
-
-(Accented letters need the `[Console]::OutputEncoding` line from section 3.15.
-To see the headers, or the status of a refusal, use `curl.exe -i` as below.)
-
-Some questions to ask. The comments say how many restaurants match in the
-500-row sample and in the full dataset (all matches, not just the first page):
-
-```powershell
-Search-Restaurants "Best restaurants in Gurgaon with South Indian Food"     # 1 in the sample, 70 in the full dataset
-Search-Restaurants "Restaurants in Gurgaon under Rs. 1000 for two"          # 35 in the sample, 893 in the full dataset
-Search-Restaurants "Nearest place that serves Vada Pav" $cyberHub           # none in the sample; 16 in the full dataset, the nearest 0.47 km away
-Search-Restaurants "Nearest place that serves Vada Pav"                     # no location: best rated first and a note says why (18 in the full dataset)
-Search-Restaurants "top 5 italian places near me" $cyberHub                 # the 5 best rated Italian restaurants within 5 km
-Search-Restaurants "pizza rated above 4 within 3 km" $cyberHub              # none in the sample; 2 in the full dataset
-Search-Restaurants "restaurants in Dubai under 150 dirhams"                 # 1 in the sample, 5 in the full dataset
-Search-Restaurants "cheap street food nearby" $cyberHub                     # cheapest first within 5 km: none in the sample, 35 in the full dataset
-```
-
-With the full dataset, "Nearest place that serves Vada Pav" from Cyber Hub gives
-these first three (the sample has no restaurant with those words in its name):
-
-```text
-Goli Vada Pav No. 1     DLF Phase 3                                   0.47 km
-Goli Vada Pav No. 1     Vyapar Kendra, Sushant Lok                    3.94 km
-WoW - Vada Pav & More   Sushant Shopping Arcade, Sushant Lok, Gurgaon 3.96 km
-```
-
-The raw answer, for the second question with two restaurants (the `id` will differ):
-
-```powershell
-curl.exe -i "${search}?q=Restaurants%20in%20Gurgaon%20under%20Rs.%201000%20for%20two&limit=2"
-```
-
-```text
-HTTP/1.1 200 OK
-Cache-Control: private, max-age=15
-Vary: X-Tenant-Id
-X-Request-Id: 8c0e2f6a-1d93-4b7e-a5c4-6f2d9e8b1a37
-Content-Type: application/json; charset=utf-8
-
-{
-  "data": [
-    {
-      "id": "65a1b2c3d4e5f60718293a4b",
-      "name": "Crudo Juicery",
-      "address": "DLF Phase 3, Gurgaon",
-      "locality": "DLF Phase 3",
-      "city": "Gurgaon",
-      "country": "India",
-      "countryCode": "IN",
-      "cuisines": ["Beverages", "Salad"],
-      "averageRating": 4.3,
-      "votes": 33,
-      "costForTwo": 400,
-      "currency": "INR"
-    },
-    { "...": "the second restaurant, same fields" }
-  ],
-  "page": { "limit": 2, "offset": 0, "hasMore": true },
-  "meta": { "sort": "rating", "order": "desc", "tookMs": 3 },
-  "interpretation": {
-    "q": "Restaurants in Gurgaon under Rs. 1000 for two",
-    "summary": "Restaurants in Gurgaon, average cost for two at most 999 INR, best rated first",
-    "filters": { "city": "Gurgaon", "maxCost": 999, "currency": "INR" },
-    "words": [],
-    "overridden": [],
-    "notes": []
-  }
-}
-```
-
-How to read it:
-
-- `data`, `page` and `meta` are exactly what the list returns (section 3.15).
-- `interpretation.summary` is the whole search in one line, written from the
-  query that ran, so it cannot disagree with it.
-- `interpretation.filters` is what the sentence was turned into, in the names of
-  the list's parameters. Send them to `GET /v1/restaurants` and you get the same
-  restaurants; a test checks that.
-- `interpretation.words` are the words of the sentence that are not a place,
-  cuisine or filter. Each one must appear in the restaurant's name or area (below).
-- `interpretation.overridden` lists the parameters you sent yourself that took the
-  place of something in the sentence.
-- `interpretation.notes` are the assumptions, and what could not be answered.
-  The third question, from Cyber Hub, says this:
-
-```json
-"interpretation": {
-  "q": "Nearest place that serves Vada Pav",
-  "summary": "Restaurants with \"vada pav\" in the name or area, nearest first",
-  "filters": { "sort": "distance" },
-  "words": ["vada", "pav"],
-  "overridden": [],
-  "notes": [
-    "\"vada\", \"pav\" are not a city, country, cuisine or filter, so each word must appear in a restaurant's name or area. The data has no menu items to search."
-  ]
-}
-```
-
-**What a sentence can say**
-
-| You write | It means | Notes |
-| --- | --- | --- |
-| a city of the data: "Gurgaon", "Gurugram", "Delhi" | `city` | Other names of a city are understood as in the list. Delhi is New Delhi |
-| a country: "India", "UK", "USA", "UAE" | `country` | Names and nicknames, never the two-letter codes: "in" and "us" are ordinary words |
-| a cuisine of the data: "South Indian", "pizza", "street food" | `cuisine` | Whole names. "Indian" is the cuisine Indian, not North Indian |
-| "under / below / less than Rs. 1000" | `maxCost=999` | Under means below, so 1000 itself is out |
-| "up to / within / at most / budget Rs. 1000" | `maxCost=1000` | |
-| "over / above Rs. 500", "at least / from Rs. 500" | `minCost=501`, `minCost=500` | |
-| "between 500 and 1500", "Rs 500-1500", "under 1.5k" | `minCost` and `maxCost` | `k` and thousands separators are read |
-| "per person" | the amount is doubled | The data prices a meal for two; a note says so |
-| "Rs", "₹", "rupees", "$", "dirhams", "AED" and other codes | `currency` | With no currency, costs are compared in each restaurant's own, and a note says so |
-| "rated above 4", "4 stars", "4+ rated" | `minRating` | 0 to 5 |
-| "within 3 km", "2 miles", "500 m" | `radiusKm` | At most 50. Needs `lat` and `lng` |
-| "near me", "nearby", "close by" | `radiusKm=5` | Needs `lat` and `lng`; a note says that 5 km was assumed |
-| "nearest", "closest" | `sort=distance` | Needs `lat` and `lng`; the nearest wherever it is, with no radius |
-| "best", "top", "top rated" | `sort=rating` | |
-| "cheapest", "cheap", "affordable" | `sort=cost`, lowest first | |
-| "most expensive" | `sort=cost`, highest first | |
-| "popular", "most reviewed" | `sort=votes` | |
-| "top 5", "3 nearest", "10 restaurants" | `limit` | At most 50 |
-| "with online delivery", "without table booking" | `delivery`, `booking` | |
-| "open now", "late night", "24/7" | ignored | Opening hours are not in the data; a note says so |
-| anything else | `words` | Up to 6, each must appear in the name or the area |
-
-If two phrases ask for different orders ("cheapest best pizza") the first one is
-used and a note names the other.
-
-**Words that are not a place or a filter.** The data has cuisines but no menu, so
-"vada pav" cannot be found as a dish. What the API does instead is look for each
-word in the restaurant's name and in its area (`locality`), ignoring case, as
-plain text, and requires all of them. "vada pav" finds Goli Vada Pav No. 1 and
-Vada Pav Junction; it does not find a snack bar that sells vada pav under another
-name, and it does not find a restaurant that has only "pav". When nothing
-matches, the answer is `200` with an empty page and a note, not `404`. The note
-says that fewer words will match more.
-
-**A sentence together with parameters.** All the parameters of section 3.15 work
-here, with or without a sentence:
-
-- A parameter you send wins over the sentence, one by one. `q=pizza in Delhi`
-  with `city=Pune` is pizza in Pune; `overridden` says `["city"]` and a note
-  says so.
-- A price is one idea: `minCost` or `maxCost` in the request replaces the whole
-  price in the sentence, currency included. `sort` replaces the sentence's order
-  and its direction together. `name` replaces nothing: it and the words of the
-  sentence both apply.
-- A sentence cannot say where you are, so `lat` and `lng` are always parameters.
-  Without them, "nearest", "near me" and "within 3 km" are left out and a note
-  says that distance was not used. The restaurants come back best rated first.
-- `limit` works as in the list: "top 2" is a page of two, with `hasMore` and
-  `offset` for the next; `limit` in the request wins.
-- A request that contradicts its own sentence is a `400` that names the parameter:
-  `order=desc` with "nearest" cannot be done.
-- Without `q`, the endpoint is the list, and `interpretation.q` is `null`.
-
-**What the API refuses.** The same problem format as everywhere:
-
-| Request (after `$search`) | Answer | What it shows |
-| --- | --- | --- |
-| `?q=` | `400`, `parameter` = `q`, `must not be empty` | An empty sentence is not "everything" |
-| `?q=pizza&q=pasta` | `400`, `parameter` = `q` | One sentence at a time |
-| `?q=` and 201 characters | `400`, `must be at most 200 characters` | A sentence is read up to 200 characters |
-| `?qq=pizza` | `400`, `Unknown parameter "qq". Remove it.` | A typo is reported, as in the list |
-| `?q=pizza&radiusKm=3` | `400`, `parameter` = `radiusKm`, `needs lat and lng` | A radius of your own needs a point |
-| `?q=nearest%20pizza&lat=28.5&lng=77.1&order=desc` | `400`, `parameter` = `order` | The request contradicts its sentence |
-| `?q=xyzzy` | `200`, `"data": []`, and a note | A question with no answers is not an error |
-
-**What it does not do.** It is a reader of phrases, and it says when it did not
-understand: the words it cannot place are searched in names and areas, which finds
-little. It does not know synonyms ("veg" is not "Vegetarian"), moods ("romantic"),
-dishes ("dosa" is searched in names, not menus), opening hours, or a rating
-upper limit ("rated below 3"). A word that is also the name of a city in the data
-is read as the city. Section 9 lists what a later step could add.
-
-**Check the answers against MongoDB itself**
+The plain-text path (`SEARCH_ENGINE=rules`, or the fallback):
 
 ```powershell
 npm run db:shell
@@ -1034,9 +804,144 @@ db.restaurants.countDocuments({ tenantId: "biteexpress", status: "active", $and:
 # 0 with the sample, 18 with the full dataset (16 of them have coordinates)
 ```
 
-That is the query the API builds for "vada pav": one `$or` for each word, joined
-by `$and`. `npm run db:explain` shows the plans of the searches with words (section
-3.15).
+That is the query the API builds for "vada pav" on that path: one `$or` for each word,
+joined by `$and`. `npm run db:explain` shows the plans of the searches with words
+(section 3.15).
+
+The Atlas Search path asks `$search` for the ids first, then runs the listing on them.
+The first step, for "vada pav", typed in mongosh (it needs the Atlas Local container and
+a `queryable` search index: `db.restaurants.getSearchIndexes()`):
+
+```js
+db.restaurants.aggregate([
+  { $search: { index: "restaurants_search", compound: {
+      filter: [
+        { equals: { path: "tenantId", value: "biteexpress" } },
+        { equals: { path: "status", value: "active" } } ],
+      must: [
+        { compound: { minimumShouldMatch: 1, should: [
+            { text: { query: "vada", path: ["name", "address.locality"], fuzzy: { maxEdits: 1, prefixLength: 1 } } },
+            { autocomplete: { query: "vada", path: "name" } },
+            { autocomplete: { query: "vada", path: "address.locality" } } ] } },
+        { compound: { minimumShouldMatch: 1, should: [
+            { text: { query: "pav", path: ["name", "address.locality"] } },
+            { autocomplete: { query: "pav", path: "name" } },
+            { autocomplete: { query: "pav", path: "address.locality" } } ] } } ] } } },
+  { $limit: 500 },
+  { $project: { _id: 1, name: 1, "address.locality": 1 } }
+])
+```
+
+The API builds this in `buildTextSearchPipeline` (`src/restaurants/atlas-text-query.ts`) and
+keeps only `_id`; the name and the area are added here so that you can read the result.
+"pav" has three letters, so it gets no typo allowance. To compare the two engines, set
+`SEARCH_ENGINE=rules` in `.env`, restart the API and ask the same sentence.
+
+### 3.17 Read and try the API contract (Swagger)
+
+With the API running, open `http://localhost:3000/docs` in a browser. The Swagger UI lists
+every endpoint with its parameters and their limits, the request body with two examples,
+every answer (the success, the `304`, and each problem) with its headers, and a "Try it
+out" button that sends the call for you. The `X-Tenant-Id` field may stay empty: the
+default tenant is `biteexpress`.
+
+The same contract as files, for Postman, Insomnia or a code generator:
+
+```powershell
+curl.exe -s http://localhost:3000/docs/openapi.json
+curl.exe -s http://localhost:3000/docs/openapi.yaml
+```
+
+In Postman, choose Import and paste the link `http://localhost:3000/docs/openapi.json`: it
+makes a collection with one request for each operation.
+
+With `DOCS_ENABLED=false` (section 3.10), `/docs` answers `404`. Use that on a deployment
+that is open to the internet.
+
+The document is `src/docs/openapi.document.ts`, written by hand (DECISIONS D23). Two test
+files keep it true: `src/docs/openapi.document.spec.ts` compares every parameter and body
+field with the Zod schemas, and `test/docs.e2e-spec.ts` checks real answers against the
+document. When you change a schema or an answer, change the document too; the failing test
+names the field that disagrees.
+
+### 3.18 Run SonarQube (static analysis and coverage)
+
+SonarQube has its own Compose file, so the demo stack stays small. It needs about 3 GB of
+free memory.
+
+```powershell
+npm run sonar:up       # starts SonarQube; the first start takes 1 to 2 minutes
+```
+
+1. Open `http://localhost:9000`, log in as `admin` with the password `admin`, and choose a
+   new password when it asks.
+2. Create a token: your avatar, My Account, Security, Generate Tokens. Copy it into `.env`
+   as `SONAR_TOKEN=...` (Git ignores `.env`).
+3. Run the analysis:
+
+```powershell
+npm run sonar:scan     # the unit tests with coverage, then the scanner in a container
+```
+
+4. Open `http://localhost:9000/dashboard?id=biteexpress-discovery`: bugs, vulnerabilities,
+   code smells, duplication, coverage and the quality gate.
+
+```powershell
+npm run sonar:down     # stops it; the analysis history stays in the Docker volumes
+```
+
+What it analyses is in `sonar-project.properties`. Production code is `src/` without the
+`*.spec.ts` files; tests are those specs and `test/`; coverage comes from the unit tests
+(`coverage/lcov.info`), and `scripts/sonar/relativize-lcov.mjs` rewrites its paths so that
+the scanner container finds the files; the entry points that only start a process are left
+out of coverage. A scan reports and does not fail: set `sonar.qualitygate.wait=true` to make
+it fail when the quality gate fails (for CI). The SonarQube port is bound to `127.0.0.1`
+because its first login is `admin` / `admin`. No scan result is recorded in this repository.
+
+### 3.19 Deploy to a cloud host
+
+The API image runs wherever containers run. It has no settings baked in: it listens on
+`$PORT` (3000 if unset), reads the database from `$MONGODB_URI`, runs as the non-root `node`
+user, and answers `GET /health` (liveness) and `GET /ready` (readiness). There are two
+shapes. DECISIONS D18 explains why no single image holds both MongoDB and the API.
+
+**A. A virtual machine with Docker (a demo, or a first deployment).** It is the stack of
+section 3.9, with the API port opened to the network and a proxy in front.
+
+1. On the VM, install Docker with Compose v2, and clone the repository.
+2. Create `.env` next to `docker-compose.yml` with `API_BIND=0.0.0.0` and
+   `DOCS_ENABLED=false`. `API_BIND` publishes the API port on all addresses (it is
+   `127.0.0.1` by default). Leave `MONGO_PORT` alone: MongoDB stays bound to `127.0.0.1`,
+   because the Atlas Local database has no password.
+3. Run `docker compose up -d --build --wait --wait-timeout 300`, then
+   `docker compose run --rm --build importer`.
+4. Put a reverse proxy or the provider's load balancer in front for TLS, with its health
+   check on `/ready`. The API does not terminate TLS.
+
+The Atlas Local database is for development and demos. For anything that people depend on,
+use shape B.
+
+**B. A container platform and an Atlas cluster (the shape production takes).**
+
+1. Build the image and push it to a registry:
+   `docker build -t <registry>/biteexpress-api:<tag> .`, then `docker push` it.
+2. Create an Atlas cluster and a database user, and add the platform's outgoing addresses
+   to the cluster's network access list. The user must be able to create the collection,
+   its indexes and the search index, because the API does so at startup (a migration job
+   with its own user is the production answer, DECISIONS D17).
+3. Set these on the service: `MONGODB_URI` (the `mongodb+srv://` string, taken from the
+   platform's secret store, never from the image or from Git), `MONGODB_DB`,
+   `DEFAULT_TENANT_ID`, `NODE_ENV=production`, `READ_TIMEOUT_MS`, `SEARCH_ENGINE=atlas`,
+   and `DOCS_ENABLED=false` if the service is public. Most platforms set `PORT` themselves.
+4. Health checks: liveness on `GET /health`, readiness on `GET /ready`.
+5. Load the restaurants once, from your machine: set `MONGODB_URI` to the same string and
+   run `npm run import` (or `npm run import -- --file data/full/zomato.csv`). The first
+   start also creates the search index, which takes about a minute; until it is ready,
+   the leftover words of a sentence are matched as plain text and the answer says so
+   (`interpretation.textSearch.degraded`).
+
+Not done for the cloud: TLS inside the service, authentication, a secrets manager, image
+scanning, autoscaling rules, and a rate limit in front (DECISIONS sections 6 and 7).
 
 ## 4. What happens when the API starts
 
@@ -1053,9 +958,14 @@ by `$and`. `npm run db:explain` shows the plans of the searches with words (sect
    - creates the five indexes by name (a no-op when they already exist);
    - asks for the Atlas Search index, and only logs a warning if the deployment
      cannot do search.
-5. Only now does the HTTP server start listening, so the first request always
-   finds the schema in place.
-6. On Ctrl+C or SIGTERM, Nest runs its shutdown hooks and `DatabaseModule`
+5. `main.ts` mounts the Swagger UI and the OpenAPI files at `/docs` when
+   `DOCS_ENABLED` is true (the default).
+6. Only now does the HTTP server start listening, so the first request always
+   finds the schema in place. The way the leftover words of a sentence are matched
+   was chosen when the modules were built (Atlas Search, or plain rules when
+   `SEARCH_ENGINE=rules`). Whether the search index is ready is looked at when a
+   search needs it, not at startup, so a slow index build never delays the API.
+7. On Ctrl+C or SIGTERM, Nest runs its shutdown hooks and `DatabaseModule`
    closes the MongoDB connection pool.
 
 ## 5. Reading the `/ready` response
@@ -1073,8 +983,10 @@ Every check has a 2 second limit, so the endpoint cannot hang.
 | `search.queryable` | `true` once the search index can answer queries |
 
 The search index is reported but never makes the endpoint fail. `GET
-/v1/restaurants/search` does not query it yet: it reads the sentence by rule and
-uses the ordinary indexes, so it works on any MongoDB (section 3.16).
+/v1/restaurants/search` asks it for the leftover words of a sentence only while
+`search.queryable` is true; otherwise it matches those words as plain text on the
+ordinary indexes and says so in the answer (`interpretation.textSearch.degraded`), so
+the endpoint works on any MongoDB (section 3.16).
 
 ## 6. Troubleshooting
 
@@ -1090,6 +1002,15 @@ uses the ordinary indexes, so it works on any MongoDB (section 3.16).
 | `/ready` is `503`, `indexes.missing` lists names | An index was dropped, the collection is new, or a step added an index (Step 5 added `tenant_score`) | Restart the API: startup creates what is missing |
 | `/ready` is `200` but `search.status` is `UNAVAILABLE` or `MISSING` | The deployment has no search process, or the search index was not created | Look for the warning `Atlas Search index ... was not created` in the API log. Use the Atlas Local image, not a plain `mongo` image. Once the database is healthy, restart the API: startup asks for the search index again |
 | `/ready` is `200`, `search.status` `PENDING` or `BUILDING` | The search index is still building | Wait 10 to 60 seconds and ask again |
+| A search answers `200` with `"textSearch": {"engine": "rules", "degraded": true}` | The search index is not queryable yet (the first minute after a start), the database has no search process (not the Atlas Local image), or a search failed | Read `search` in `curl.exe -s http://localhost:3000/ready`; wait for `READY`. If a search failed, the API log has the warning `Atlas Search failed, so the words are matched as plain text instead` and the reason |
+| A read answers `503` with `Retry-After: 1` and "The database did not answer in time" | MongoDB ran past `READ_TIMEOUT_MS` (2,000 ms by default): a slow query, a cold start, or an overloaded container | Retry. If it repeats, read `npm run db:logs`, run `npm run db:explain`, and only then raise `READ_TIMEOUT_MS` in `.env` (DECISIONS D22) |
+| `/docs` answers `404` | `DOCS_ENABLED` is `false` | Remove it or set it to `true`, and restart the API |
+| `npm install` prints `EBADENGINE`, or a build fails on syntax | Node is older than 22.12 | `nvm use 22`, then check `node --version` |
+| `docker compose up --build` fails at `npm ci` with "package.json and package-lock.json are not in sync" | A dependency changed and the lockfile was not updated | Run `npm install`, commit `package-lock.json`, and build again |
+| `npm run sonar:up`: SonarQube exits right away or never becomes ready | Too little memory for Docker (it wants about 3 GB) | `docker compose -f docker-compose.sonar.yml logs sonarqube`; raise Docker Desktop's memory limit; `npm run sonar:down` and try again |
+| `npm run sonar:scan` fails with 401 or "Not authorized" | `SONAR_TOKEN` is empty or wrong | Create a token in SonarQube (section 3.18), put it in `.env`, and run it again |
+| `npm run sonar:scan` shows no coverage | The scanner cannot match the paths of the coverage report to the files | Run the whole `npm run sonar:scan`, which runs `scripts/sonar/relativize-lcov.mjs` between the tests and the scanner, not the scanner alone |
+| A cloud deployment starts, but `/ready` is `503` | The platform cannot reach MongoDB, or the database user may not create indexes | Check `MONGODB_URI`, the Atlas network access list and the user's rights, and read the API log |
 | `curl` prints a progress table or asks for input | PowerShell's `curl` alias | Use `curl.exe` |
 | `npm run test:int` fails with `MongoServerSelectionError` | The database is not running | `npm run db:up` |
 | `npm run test:int` was killed and left `biteexpress_it_...` databases behind | The cleanup step did not run | `npm run db:shell`, then `db.adminCommand({ listDatabases: 1 }).databases.map(d => d.name)` and `db.getSiblingDB('biteexpress_it_xxxx').dropDatabase()` for each leftover |
@@ -1106,7 +1027,7 @@ uses the ordinary indexes, so it works on any MongoDB (section 3.16).
 | `npm run import`: `Could not read the CSV file "data/full/zomato.csv"` | The archive is not unzipped there, or the path is wrong | Unzip it so that `data/full/zomato.csv` exists, or pass the right path with `--file` |
 | `npm run import`: `The CSV is missing the column(s) ...` | The file is not a Zomato CSV, or its header was changed | The message lists the missing columns and the header it found |
 | `npm run import`: `Could not read the text fixes file` | `data/text-fixes.json` is missing or was changed into something that is not valid | Restore it from Git (`git checkout data/text-fixes.json`), or rebuild it with `npm run import:fixes` |
-| `git status` lists `data/full/` | `data/.gitignore` is missing | Unzip the Step 3 files again. Never commit the dumps: each record carries an API key |
+| `git status` lists `data/full/` | `data/.gitignore` is missing | Restore it with `git checkout data/.gitignore`. Never commit the dumps: each record carries an API key |
 | API terminal says `Cannot find module '.../dist/...'` right after `npm run import` | Both `start:dev` and `npm run import` build into `dist/`, and the import's build replaced it while the API was restarting | Stop the API and start it again |
 | `npm run db:import`: `no such file or directory` for `data/...` | The `./data` folder is not shared with Docker Desktop, or the path after `--file` is wrong | Check Docker Desktop's file sharing. The path is relative to `/app`, so `data/full/zomato.csv` |
 
@@ -1119,7 +1040,7 @@ lines of `npm run db:logs`, and the full API error.
 | --- | --- |
 | `README.md` | The overview: quick start, the three questions of the brief, the API, the architecture, the data, the tests, the assumptions and the AI disclosure |
 | `docs/DECISIONS.md` | Why it is built this way: every decision with its trade-off, and the migration, scale, security and compliance story, with what is built and what is only described |
-| `docker-compose.yml` | The `mongodb` service (Atlas Local, data volumes, port bound to 127.0.0.1), the `api` service for demo mode and the `importer` job (profile `tools`) |
+| `docker-compose.yml` | The `mongodb` service (Atlas Local, data volumes, port bound to 127.0.0.1), the `api` service (built from the `Dockerfile`, started with MongoDB by one command) and the `importer` job (profile `tools`) |
 | `Dockerfile`, `.dockerignore` | Multi-stage build of the API image: compile, install production dependencies only, run as the non-root `node` user, health check on `/health` |
 | `src/config/env.schema.ts` | Every setting, its type, range and default |
 | `src/database/restaurants.collection.ts` | The restaurants validator, the five indexes and the search index definition, as plain data |
@@ -1135,6 +1056,12 @@ lines of `npm run db:logs`, and the full API error.
 | `scripts/mongosh/` | The scripts behind `npm run db:inspect`, `npm run db:validator-demo` and `npm run db:explain` |
 | `src/http/` | Everything shared by the HTTP layer. `problem.ts` decides how every failure is reported (RFC 9457), `problem-details.filter.ts` writes it, `request-context.ts` gives each request an id and an access-log line, `zod-validation.pipe.ts` turns Zod errors into field errors, `tenant.ts` reads the tenant header, `api-prefix.ts` holds `v1` |
 | `src/restaurants/` | The restaurant resource. `create-restaurant.schema.ts` is the request contract, `build-restaurant.ts` turns a request into the stored document, `restaurant.resource.ts` turns a stored document into the answer, `restaurants.service.ts` holds the use cases, `restaurant.store.ts` is the storage port and `mongo-restaurant.store.ts` its MongoDB adapter, `restaurants.controller.ts` is the HTTP glue. For the listing: `list-query.schema.ts` is the contract of the query string, `list-criteria.ts` turns it into what the store is asked, `mongo-list-query.ts` builds the MongoDB query (pure, so it is unit-tested without a database), `restaurant.list-item.ts` shapes each answer, and `vocabulary*.ts` knows the tenant's cities and cuisines, and the other names of a city. For the search: `search-text.ts` reads a sentence into list parameters (pure, one rule per kind of phrase), `search-query.ts` merges them with the request's own parameters and writes the one-line summary, and `restaurant.search-response.ts` is the shape of the answer |
+| `docker-compose.sonar.yml`, `sonar-project.properties`, `scripts/sonar/` | SonarQube and its scanner (section 3.18); what is analysed; the script that makes the coverage paths readable by the scanner |
+| `.nvmrc`, `package.json` (`engines`) | The Node line: 22 |
+| `src/docs/` | `openapi.document.ts` is the API contract, written by hand; `api-docs.ts` mounts the Swagger UI and the files at `/docs`; `openapi.document.spec.ts` keeps the document true against the Zod schemas |
+| `src/database/read-limits.ts`, `query-timeout.error.ts`, `mongo-errors.ts` | The default time limit of a read, the error that a stopped read becomes, and the recognition of MongoDB's "time limit exceeded" (error 50) |
+| `src/restaurants/text-search.ts`, `atlas-text-query.ts`, `atlas-text-search.ts` | Matching the leftover words of a sentence: the small interface and the plain rules, the pure builder of the `$search` pipeline, and the Atlas Search adapter (index check, time limit, fallback) |
+| `test/docs.e2e-spec.ts`, `test/atlas-text-search.int-spec.ts` | The Swagger UI and the documented answers over HTTP (no database); Atlas Search against a real search process |
 | `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, the per-run test-database setup, `InMemoryRestaurantStore`, `in-memory-listing.ts` (its independently written filtering and ordering) and `restaurant-store.contract.ts` (the checks both stores must pass) |
 | `test/restaurants.e2e-spec.ts`, `test/search.e2e-spec.ts`, `test/restaurants.int-spec.ts` | Create, fetch, list and search through the whole HTTP stack with no database (the first two), and against a real MongoDB (the last) |
 | `test/mongo.int-spec.ts` | Integration tests against a real MongoDB |
@@ -1176,7 +1103,7 @@ lines of `npm run db:logs`, and the full API error.
   a container hostname that your machine cannot resolve.
 - **One `MongoClient` per process.** It owns the connection pool, is created once,
   and is closed on shutdown. Every wait has a limit: 5 seconds to find a server,
-  2 seconds per readiness check.
+  2 seconds per readiness check, and `READ_TIMEOUT_MS` (2 seconds) for every read.
 - **Three layers of tests.** Unit tests for logic, HTTP tests with a fake database
   for the API contract, and integration tests against a real MongoDB for what only a
   real server can prove. Each integration run uses its own throwaway database.
@@ -1350,12 +1277,41 @@ lines of `npm run db:logs`, and the full API error.
 - **Words that are not a place or a filter are looked for in the name and the
   area, all of them.** The data has cuisines but no menu items, so "vada pav"
   cannot be found as a dish; the honest equivalent is names and areas, and the
-  answer says so in a note. Each word is a case-insensitive literal substring
-  (escaped, so a dot is a dot), and every word must be there, because "vada pav"
-  must not return every restaurant with "pav". At most six words, and a sentence
-  of at most 200 characters, bound the query. Trade-off: an unanchored match
-  cannot use an index; the tenant prefix narrows the scan, which is fine at
-  9,551 restaurants. At millions, this is what Atlas Search is for.
+  answer says so in a note. Every word must be there, because "vada pav" must not
+  return every restaurant with "pav". At most six words, and a sentence of at most
+  200 characters, bound the query.
+- **Atlas Search names the restaurants, and the listing does the rest.** `$search`
+  and `$geoNear` must each be the first stage of a pipeline, so one query cannot
+  search words and measure distance. Atlas is asked only "which restaurants?" and
+  answers with at most 500 ids; the ordinary listing then runs on those ids with
+  every other filter, the sort, the distance and the paging, which already have
+  tests and query plans. Each word fits as a whole word, the start of a word or
+  (from four letters) with one typo, in the name or the area, and the tenant and
+  `status: active` are `filter` clauses. Trade-offs: no match from the middle of a
+  word, a moment before a new restaurant is searchable, and the cap of 500
+  (DECISIONS D12).
+- **Atlas answers "nothing" when its index is not ready, so the code asks first.** A
+  missing or building search index returns no results instead of an error, which
+  looks like "nothing matches". The adapter checks that the index is `queryable`
+  before it searches (the check is remembered for 30 seconds, and for 5 while the
+  index is not ready). Not ready, or any failure or time-out, means that the plain
+  rules answer and the answer is marked `degraded`: a search box should answer, and
+  the person reading it should be told when the answer is a worse one.
+- **The plain rules stay, behind the same interface.** `TextSearch` has two engines,
+  `AtlasTextSearch` and `RulesTextSearch`. `SEARCH_ENGINE=rules` selects the second,
+  the HTTP tests use it by default, and the integration tests of everything else run
+  with it, so they do not depend on the search process.
+- **Every read has a time limit.** `maxTimeMS` is set on each read from
+  `READ_TIMEOUT_MS`, so MongoDB stops the work, not only the wait. A stopped read
+  becomes `QueryTimeoutError` in the store, and `toErrorResponse` turns it into a
+  `503` problem with `Retry-After: 1` and no detail about the database. Writes are
+  not limited (DECISIONS D22).
+- **The API contract is a document, and tests keep it true.** The OpenAPI file is
+  written by hand and served at `/docs`; the unit tests compare it with the Zod
+  schemas, and the HTTP tests check real answers against it (DECISIONS D23).
+- **One Compose file, on a laptop and in the cloud.** `docker compose up --build`
+  starts MongoDB and the API together. In the cloud the same image runs alone
+  against Atlas; MongoDB does not go inside the API's image (DECISIONS D18).
 - **Whole names for cuisines, nothing guessed.** "Indian" is the cuisine Indian,
   not North Indian, and a two-letter country code is never read from a sentence
   ("in" and "us" are words). A word that fits nothing is searched as a word and
@@ -1371,15 +1327,18 @@ lines of `npm run db:logs`, and the full API error.
 - The search reads phrases by rule. It does not know synonyms ("veg" for
   Vegetarian), moods ("romantic"), a rating upper limit ("rated below 3") or
   anything about opening hours ("open now" is ignored, with a note). A word it
-  cannot place is searched in names and areas, which usually finds nothing.
-  Atlas Search (typo tolerance, relevance ranking, autocomplete) or a model-based
-  reader would be the next step; the endpoint would not change.
+  cannot place is searched in names and areas; Atlas Search tolerates a typo there,
+  but it still finds only what is written in a name or an area. Synonyms in Atlas
+  Search, or a model-based reader, would be the next step; the endpoint would not
+  change.
 - There is no menu in the data, so "vada pav" matches names and areas that contain
-  the words (18 restaurants in the full dataset, none in the sample), not
-  restaurants that sell it.
-- Words in a sentence are matched as plain substrings of the name and the area,
-  which cannot use an index. The tenant prefix narrows the scan; it would not at
-  millions of restaurants.
+  the words (18 restaurants in the full dataset with plain text matching, none in the
+  sample; Atlas Search has not been counted), not restaurants that sell it.
+- Atlas Search names at most 500 restaurants for a set of words, before the other
+  filters apply, and a new restaurant can take a moment to be found by its words
+  (DECISIONS D12). The plain-text fallback matches pieces of words, which cannot use
+  an index; the tenant prefix narrows the scan, which would not be enough at millions
+  of restaurants. Relevance is not used as a sort order.
 - "Delhi NCR" is understood as New Delhi only; Gurgaon and Noida are cities of
   their own in the data.
 - A listing has no total count, only `hasMore`, and an offset stops at 1,000.
@@ -1405,6 +1364,8 @@ lines of `npm run db:logs`, and the full API error.
   migration.
 - The local database has no authentication. That is acceptable on a laptop with
   the port bound to 127.0.0.1; it is not acceptable anywhere else.
-- The Atlas Search index definition is a baseline, and nothing queries it yet. A
-  `$search` query for typo tolerance and relevance ranking, with the rule-based
-  path as the fallback, would extend it.
+- The Atlas Search index definition holds more than the search uses: tokens for city
+  and cuisine, numbers for rating and price, and geo. They are the base for facets,
+  relevance by rating and a `near` clause, which nothing uses yet.
+- Reads have a time limit and writes do not. There is no circuit breaker and no rate
+  limit.

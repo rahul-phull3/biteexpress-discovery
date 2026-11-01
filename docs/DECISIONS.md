@@ -14,12 +14,15 @@ illustrative unless marked as measured. External facts come from pages I read on
 | Built and tested | Only described |
 | --- | --- |
 | Create, get, list and search endpoints | Moving off the monolith (section 5) |
-| One shared collection; the tenant in every document, index and query | Peak-hour hardening beyond indexes (section 6) |
+| One shared collection; the tenant in every document, index and query | Peak-hour hardening beyond indexes and time limits (section 6) |
 | Five indexes, checked by query plan; `$geoNear` for distance | Authentication and rate limits (section 7) |
 | A rule-based sentence reader that shows how it read the sentence | Residency, regulation, encryption (section 8) |
-| Strict validation, one error format, `/health` and `/ready` | Querying the Atlas Search index (D12) |
-| A repeatable importer: 9,551 rows in, 9,551 documents out | CI, a load test, an OpenAPI file (section 11) |
-| Docker Compose: MongoDB, the API and the importer | |
+| Atlas Search for the leftover words of a sentence, with a marked fallback (D12) | CI and a load test (section 11) |
+| A time limit on every database read (D22) | |
+| Strict validation, one error format, `/health` and `/ready` | |
+| A repeatable importer: 9,551 rows in, 9,551 documents out | |
+| Swagger UI and an OpenAPI document that tests keep true (D23) | |
+| Docker Compose: MongoDB, the API and the importer; SonarQube set up beside it (D18, D24) | |
 
 ## 2. The brief, and how I read it
 
@@ -37,7 +40,7 @@ reversible.
 
 ## 3. Decisions in the build
 
-Each entry gives the choice, the reason and the price. D1 to D21 are all **Built**, except
+Each entry gives the choice, the reason and the price. D1 to D24 are all **Built**, except
 where an entry says otherwise.
 
 ### D1. One collection, one document per restaurant
@@ -81,8 +84,8 @@ range**.
 `npm run db:explain` asks MongoDB for the plan of 18 typical queries and fails on any
 collection scan. **Accepted (Open until measured at scale):** a city plus a cuisine sorts in
 memory; a filter that matches few restaurants (`country=QA`) walks `tenant_score` until it
-finds a page; and name filters are substring matches that no ordinary index can serve, which
-is what Atlas Search is for (D12).
+finds a page; and the `name` filter is a substring match that no ordinary index can serve
+(the words of a sentence go to Atlas Search instead, D12).
 
 ### D5. The database measures distance
 
@@ -146,16 +149,51 @@ places near me" returned places anywhere, and testing found it. **Price.** The d
 menu: words that are not a place or a filter must all appear in a name or area (at most six
 words, 200 characters), so "vada pav" cannot be found as a dish.
 
-### D12. Atlas Search: defined, not queried
+### D12. Atlas Search names the restaurants for the leftover words, and the listing does the rest
 
-**State.** The Atlas Search index `restaurants_search` is created at startup and `/ready`
-reports whether it is queryable, but **no endpoint queries it**. I stopped on purpose.
-**Why.** The core must work on any MongoDB with the ordinary indexes, the rule reader
-already answers the brief's three examples, and a second query path doubles what must be
-tested. **The upgrade (Described).** A `$search` stage with a `compound` operator (a `must`
-text clause with fuzziness on name and locality, `filter` clauses, a `near` clause on
-`location`, `$searchMeta` for facets), fed by the rule reader. If the index is not
-queryable, fall back to the rule-based path and mark the answer `degraded`.
+**Choice.** The words of a sentence that are not a place or a filter ("vada pav") are
+matched by Atlas Search, in two steps. **Step 1:** a `$search` on `restaurants_search`
+takes the tenant and the words and returns only the ids of the best 500 matches. Each word
+must be found in the name or the area: as a whole word, as the start of a word
+(`autocomplete`), or with one typo (`fuzzy`, only for words of four letters or more, and
+the first letter must be right). Only the tenant's active restaurants count, through
+`filter` clauses, which do not change the ranking. **Step 2:** the ordinary listing runs
+with `_id` in those ids, so the other filters, the sort, the distance and the paging are
+the code that already has tests and query plans.
+
+**Why two steps, and why ids only.** `$search` and `$geoNear` must each be the first stage
+of a pipeline, so one pipeline cannot answer "these words, nearest first". `$search` has
+its own `near` operator, but using it would replace `$geoNear` and the tested distance
+code. Asking Atlas only "which restaurants?" also keeps its part small enough to explain
+in a minute.
+
+**The fallback.** An index that is missing or still building does not make `$search` fail:
+it answers with no results, which looks the same as "nothing matches". So the adapter asks
+`listSearchIndexes` first and uses Atlas only when the index is `queryable` (the verdict
+is kept for 30 seconds, and for 5 seconds while it is not ready, so a finished build is
+noticed quickly; the same check feeds `/ready`, D17). When the index is not ready, the
+deployment has no search process, or a search fails or runs past its time limit (D22),
+the service matches the words as plain text in the name and the area, as it did before,
+and says so: `interpretation.textSearch` is `{ "engine": "rules", "degraded": true }`,
+with a note. When Atlas answered it is `{ "engine": "atlas", "degraded": false }`. The
+field is absent when no words were left, or when `SEARCH_ENGINE=rules`.
+
+**Price.** (1) Atlas matches whole words, the start of a word and one typo; the plain
+rules match any piece of a word, so "avpa" no longer finds "Vada Pav". (2) The index is
+filled in the background: a restaurant created a moment ago can be missing from word
+searches for a short while, though the list shows it at once. (3) The cap of 500
+candidates: a word that matches more than 500 restaurants of one tenant is cut to the best
+500 before the other filters apply, so a city filter on a very common word could miss a
+restaurant. At 9,551 restaurants this does not bite; at millions I would pass the city,
+cuisine and cost filters into the `$search` `filter` clauses. (4) A second query path to
+keep right: a unit test checks every operator and path of the query against the index
+definition, and an integration test runs it on a real Atlas Search.
+**The upgrade (Described).** Relevance as a sort order, `$searchMeta` for facets,
+synonyms, and an autocomplete endpoint. **Not verified:** the assistant that helped me
+could not run the Atlas Local container, so `npm run test:int` (it includes
+`test/atlas-text-search.int-spec.ts`) on a machine with Docker is the confirmation, and the
+counts in the README for "Nearest place that serves Vada Pav" were measured with the plain
+rules.
 
 ### D13. Two layers of validation, and one error format
 
@@ -216,15 +254,29 @@ the schema before it listens, and that bootstrap (collection and validator, name
 the search index if missing) converges to the same state on every start. **Price.** The app
 needs the right to create indexes; in production that is a migration job.
 
-### D18. The local stack
+### D18. The stack: one Compose file, on a laptop and on a cloud host
 
 The `mongodb-atlas-local` image (tag `8.0`; pin the digest once it works for you, RUNBOOK
-3.11) runs MongoDB and the Atlas Search process in one container. Ports bind to `127.0.0.1`
-because the local database has no password, and `directConnection=true` is needed because
-the one-node replica set advertises a hostname your machine cannot resolve. The API image is
-a multi-stage `node:24-slim` build that runs as the non-root `node` user, and `data/` is
-mounted read-only into the importer job. There is one `MongoClient` per process, closed on
-shutdown, and every wait has a limit.
+3.11) runs MongoDB and the Atlas Search process in one container. **One command starts the
+whole stack:** `docker compose up -d --build --wait` builds the API image, starts MongoDB,
+waits for its health check, then starts the API. The API image is a multi-stage
+`node:22-slim` build that runs as the non-root `node` user, has no settings baked in, listens
+on `$PORT`, reads the database from `$MONGODB_URI` and has a `HEALTHCHECK` on `/health`, so
+the same image runs on any host that runs containers: a VM with Compose, or a container
+platform with an Atlas cluster as its database (RUNBOOK, "Deploy to a cloud host"). The
+importer is a job in the same file (profile `tools`) with `data/` mounted read-only. Ports
+bind to `127.0.0.1` because the local database has no password (`API_BIND=0.0.0.0` for a VM
+with a proxy in front), and `directConnection=true` is needed because the one-node replica
+set advertises a hostname your machine cannot resolve. There is one `MongoClient` per
+process, closed on shutdown, and every wait has a limit.
+
+**Why Compose, and not one image with MongoDB and the API inside.** A container should run
+one program: MongoDB needs its own volume, restarts and upgrades, and in the cloud it is not
+run by the application at all (Atlas runs it), so a single image would be used on a laptop
+and never in production. Compose gives the one-command start now, and in the cloud the same
+API image is deployed alone against Atlas, which is the shape production takes. **Price.** A
+platform that takes only one image needs the database somewhere else, and the database user
+needs the right to create the collection, indexes and search index at startup (D17).
 
 ### D19. The response uses the brief's attributes, in camelCase
 
@@ -238,17 +290,74 @@ safe characters) and one access-log line (method, path, status, time), not the q
 which can carry a caller's coordinates. The probes are not logged. Not audited: the messages
 of third-party exceptions.
 
-### D21. Jest starts under Node's VM-modules flag, as NestJS 12's own generator does
+### D21. NestJS 11 on Node 22, so that Jest runs with no Node flags
 
-NestJS 12 publishes ES modules only. Jest can load them only on Node 24.9 or newer started
-with `--experimental-vm-modules`; without it, 7 of 44 unit suites could not start.
-**Choice.** The six Jest scripts in `package.json` start Jest as
-`node --experimental-vm-modules --disable-warning=ExperimentalWarning ./node_modules/jest/bin/jest.js`,
-the form the NestJS generator writes; the app itself needs no flag. **Rejected.**
-Transforming `@nestjs/*` to CommonJS, and moving to Vitest. **Price.** Node marks the flag
-experimental, and Jest started any other way needs `NODE_OPTIONS=--experimental-vm-modules`.
-**Not verified by me:** the assistant that helped me write this could not run Jest on Node
-24.9, so `npm test` and `npm run test:e2e` passing on Node 24.9 or newer is the
+NestJS 12 publishes ES modules only, and Jest loads ES modules only when Node is started
+with `--experimental-vm-modules`; without that flag 7 of 44 unit suites could not start
+when I ran the repository. My first fix was to start Jest under the flag, as the
+NestJS 12 generator does. I rejected it: a test command that depends on an experimental
+Node flag breaks the moment an IDE runner, a new Node or a build image forgets it, and it
+is hard to explain. **Choice.** NestJS 11, the last CommonJS line, on Node 22 LTS: `engines`
+says `>=22.12.0`, `.nvmrc` says 22, and the Docker image is `node:22-slim`. Every Jest
+script is plain `jest`, and the app needs no flag either. The matching `@nestjs/config` is
+on its 4.x line, which takes a `validate` function, so `validateEnv` in
+`src/config/env.schema.ts` runs the Zod schema. **Rejected.** The flag, transforming
+`@nestjs/*` to CommonJS inside Jest, and moving to Vitest. **Price.** One major version
+behind NestJS; moving to 12 later means moving the tests to an ES-module-aware runner at the
+same time. **Not verified by me:** the assistant that helped me could not run Jest, so
+`npm test` and `npm run test:e2e` passing on Node 22 with NestJS 11 is the confirmation.
+
+### D22. Every database read has a time limit
+
+**Choice.** Every read the API makes (one restaurant, a list, a `$geoNear`, a search, and the
+lookups of cities and cuisines) carries `maxTimeMS`, set by `READ_TIMEOUT_MS` (default
+2,000 ms, allowed 100 to 60,000). When MongoDB runs past it, the server stops the query
+(error code 50), the store turns that into one error type, `QueryTimeoutError`, and the one
+place that writes errors (D13) answers `503 Service Unavailable` as a problem
+(`/problems/service-unavailable`) with `Retry-After: 1`. The body says nothing about the
+limit, the query or the database. **Why.** Without a limit, one slow query (a missing index,
+a lock, a cold cache) holds a connection and a request for as long as it takes, and at peak
+those add up until everything is slow. The limit turns a slow database into a fast, honest
+"try again" that a client can retry, and `maxTimeMS` is enforced by MongoDB, so the work
+stops too, which a client-side timeout does not do. **Price.** (1) A legitimately slow read
+is refused as well, so the limit should come from a measured p99, not a guess: 2 seconds is a
+starting point and no load test has been run. (2) Writes have no limit, because a half-done
+write is a worse outcome than a slow one. (3) The Atlas Search query carries the same limit,
+and a search that runs past it falls back to the plain rules (D12) instead of answering `503`.
+(4) It is not a circuit breaker: every request still tries the database.
+
+### D23. The API contract is a document, and tests keep it true
+
+**Choice.** An OpenAPI 3.1 document (`src/docs/openapi.document.ts`), served by Swagger UI at
+`/docs`, and as `/docs/openapi.json` and `/docs/openapi.yaml`. It is written by hand. **Why
+by hand.** A generator reads decorators or schemas, but this API's rules live in Zod schemas
+with defaults, transforms and strict objects, which come out as a vaguer description than the
+code enforces; and the limits (`limit` 1 to 50, the radius, the 200-character sentence) are
+exactly what a reader of the contract wants to see. **How it stays true.** Unit tests compare
+the document's query parameters and body fields, at every level, with the Zod schemas (names,
+required lists, `additionalProperties: false`, limits, and that every example parses). HTTP
+tests send real requests (a success, a `304`, each kind of refusal, the `503` of a slow
+read) and check the status, headers, content type and body against the document with a JSON
+Schema validator. **Also decided.** The probes are documented outside `/v1`;
+`X-Tenant-Id` is a documented header on every `/v1` operation; `DOCS_ENABLED=false` switches
+the UI and the files off, because an open "Try it out" on the internet is a surface you may
+not want. **Price.** A change is written twice (the schema and the document), with a failing
+test to remind you; and the document describes the answers it has examples and schemas for,
+not every possible one.
+
+### D24. SonarQube beside the stack, not inside it
+
+**Choice.** `docker-compose.sonar.yml` runs SonarQube Community and its scanner on request:
+`npm run sonar:up`, then `npm run sonar:scan`, which runs the unit tests with coverage and
+sends the report. **Why a separate file.** The demo stack stays small (SonarQube wants about
+3 GB of memory), and static analysis is a development tool, not part of what is deployed.
+`src/**/*.spec.ts` and `test/` count as tests, not as production code, and the entry points
+that only start a process are left out of coverage. The server's port is bound to
+`127.0.0.1`, because its first login is `admin` / `admin`. `sonar.qualitygate.wait` is off, so
+a scan reports and does not fail; CI would turn it on. **Price.** Nothing runs it
+automatically (there is no CI), and no scan result is recorded in this repository, so I make
+no claim about the quality gate. **Not verified by me:** the assistant that helped me could
+not run Docker, so the first `npm run sonar:scan` on a machine with Docker is the
 confirmation.
 
 ## 4. Changing the schema safely, and one name clash to settle early
@@ -310,7 +419,7 @@ Pull the cheapest lever first.
 | --- | --- | --- |
 | Indexes, projection, bounded pages | **Built** | D4, D7 |
 | Short client cache, ETag | **Built** | D16 |
-| Time limits | **Built** (partly) | 5 seconds to find a server, 2 seconds per readiness check. **Not built:** `maxTimeMS` on queries, so a slow query can run unbounded today; the first thing I would add, answered with `503` and `Retry-After` |
+| Time limits | **Built** (reads) | 5 seconds to find a server, 2 seconds per readiness check, and `maxTimeMS` on every read (`READ_TIMEOUT_MS`, 2 seconds by default), answered with `503` and `Retry-After` (D22). **Not built:** a limit on writes, and a limit chosen from a load test |
 | Circuit breaker, concurrency and rate limits | **Described** | A breaker and a concurrency limit around MongoDB calls, a per-key rate limit in front. Discovery gets its own service and connection pool, so a lunch surge cannot starve ordering |
 | Edge cache | **Described** | Anonymous results for 30 to 60 seconds in a CDN, with `lat` and `lng` rounded to a grid of about 200 m. Needs `public` or `s-maxage`, which D16 does not set |
 | Read scaling | **Described** | Replica set, `secondaryPreferred` reads, dedicated Search Nodes, autoscaling. Sharding only when size or write volume demands it; here more likely residency than size |
@@ -326,11 +435,13 @@ recording p50, p95, p99, errors, and MongoDB CPU and connections). **Not run.** 
 the peak I would expect connections and CPU on geo-plus-sort queries to break first, not
 storage.
 
-**Failure behaviour (Described; rehearse it in a game day).** If Search Nodes are down, the
-API falls back to the rule-based path and marks the answer degraded (D12). If the primary
-fails, an election takes seconds, and retryable reads and writes with sensible timeouts hide
-most of it. If MongoDB is unreachable, `/ready` fails and a load balancer stops sending
-traffic, while `/health` stays up so the process is not restarted in a loop (D17).
+**Failure behaviour (rehearse it in a game day).** **Built:** if the Atlas Search index is
+not queryable, or a search fails or runs past its limit, the API falls back to the
+rule-based path and marks the answer degraded (D12); a slow read is stopped and answered
+`503` with `Retry-After` (D22); if MongoDB is unreachable, `/ready` fails and a load
+balancer stops sending traffic, while `/health` stays up so the process is not restarted in
+a loop (D17). **Described:** if the primary fails, an election takes seconds, and retryable
+reads and writes with sensible timeouts hide most of it.
 
 ## 7. Security: what is built, and what is not
 
@@ -339,7 +450,8 @@ traffic, while `/health` stays up so the process is not restarted in a loop (D17
 | Injection, over-posting | Plain-text query values (`?city[$ne]=x` is a 400); escaped names; strict request schemas | |
 | Tenant isolation | `tenantId` in every document, index and query; boundary tests; another tenant's id is a 404 | The tenant comes from a demo header, not a credential |
 | Authentication | | The plan: an API key per tenant, or a token with a tenant claim, at the gateway |
-| Abuse | Bounded pages (50), offsets (1,000), radius (50 km), sentence length (200) and words (6) | Rate limiting, concurrency limits, query time limits |
+| Abuse | Bounded pages (50), offsets (1,000), radius (50 km), sentence length (200) and words (6); a time limit on every database read (2 seconds, D22); at most 500 Atlas Search candidates | Rate limiting, concurrency limits, a time limit on writes |
+| The API documentation | `DOCS_ENABLED=false` switches the Swagger UI and the files off | When it is on it is open, and "Try it out" makes ordinary calls as the demo tenant |
 | Leaks | A bug answers a generic 500 with the request id; connection-string passwords are masked; no query string in logs | |
 | Secrets | None in the repository; `.env` ignored; the Zomato API dumps (an API key in every record) are git-ignored | A secrets manager and rotation |
 | Transport, headers | | TLS (the gateway terminates it in production), security headers |
@@ -389,8 +501,10 @@ partners and support about what will change.
 
 ## 10. How the search would evolve (Described)
 
-- **Atlas Search** (D12): typo tolerance, relevance, autocomplete, facets and synonyms, with
-  the rule-based path as its fallback.
+- **Atlas Search** (D12) is built for the leftover words, with the rule-based path as its
+  fallback. Next: relevance as a sort order, an autocomplete endpoint, facets
+  (`$searchMeta`), synonyms, and the other filters passed into the `$search` `filter`
+  clauses, so that the cap of 500 candidates stops mattering.
 - **Menu data:** makes "serves vada pav" literally true; it needs a `menus` collection.
 - **Embeddings and Vector Search:** meaning rather than words; they need menus and reviews
   to embed, not names and cuisines.
@@ -403,21 +517,22 @@ partners and support about what will change.
 **Cut, and why.** The brief estimates 3 to 5 hours and values judgment under time
 constraints, so I put the time into a correct core, MongoDB depth and the explanation:
 
-- Querying the Atlas Search index (D12).
-- Continuous integration and a one-command `test:all`: the tests exist and pass on my
-  machine, and nothing runs them automatically.
+- Atlas Search beyond the leftover words: relevance as a sort order, an autocomplete
+  endpoint, facets, synonyms (D12).
+- Continuous integration and a one-command `test:all`: the suites exist, and nothing runs
+  them automatically.
 - A load test and a committed copy of the query plans (`npm run db:explain` makes them on
   demand).
 - Update and delete endpoints, a lookup by legacy id, and lists of cities and cuisines as
   endpoints. The brief asks for create and read.
-- An OpenAPI file, authentication, rate limiting, query time limits.
+- Authentication, rate limiting, a circuit breaker, a time limit on writes.
 
 **Two more weeks would buy, in this order:** (1) authentication with the tenant taken from
-the credential, which closes the largest gap in section 7; (2) time limits, a circuit
-breaker and a rate limit; (3) CI and a load test with saved results; (4) the Atlas Search
-path with its fallback; (5) keyset paging; (6) a working sync prototype (Debezium, Kafka and
-the MongoDB sink into a staging cluster, with a reconciliation script); (7) a menu
-collection.
+the credential, which closes the largest gap in section 7; (2) a circuit breaker and a rate
+limit, and read time limits set from a load test; (3) CI and a load test with saved results;
+(4) keyset paging; (5) Atlas Search relevance and facets; (6) a working sync prototype
+(Debezium, Kafka and the MongoDB sink into a staging cluster, with a reconciliation script);
+(7) a menu collection.
 
 ## 12. Open questions, and what I could not verify
 
@@ -432,8 +547,9 @@ collection.
 - **The real database.** The unit and HTTP tests prove what the query builder produces;
   `npm run test:int` and `npm run db:explain` check how MongoDB plans it. The result of my
   last run is recorded in the [README](../README.md).
-- **Search quality** on real users' sentences, **the response names** (D19), and **Jest
-  under `--experimental-vm-modules`** (D21).
+- **Search quality** on real users' sentences, **the response names** (D19), **the first
+  full run of the suites on Node 22 with NestJS 11** (D21), **Atlas Search results on the
+  full dataset** (D12), and **the first SonarQube scan** (D24).
 
 ## 13. Sources
 
@@ -469,4 +585,8 @@ Pages and source files read for this document, on 1 November 2026:
 Brazil's LGPD; customer-managed keys, auditing, private networking and point-in-time restore
 as Atlas capabilities; the compound-index rule of equality, sort, range;
 `secondaryPreferred` reads and retryable reads and writes; the take-home brief itself, and
-the Kaggle dataset it links (Zomato Restaurants Data).
+the Kaggle dataset it links (Zomato Restaurants Data). For the last round of work: the Atlas
+Search operators used in D12 (`compound`, `text` with `fuzzy`, `autocomplete`, `equals`) and
+the rule that `$search` and `$geoNear` must each be the first stage of a pipeline;
+`maxTimeMS` and its error code 50 (D22); OpenAPI 3.1 and Swagger UI (D23); SonarQube
+Community and its scanner (D24).

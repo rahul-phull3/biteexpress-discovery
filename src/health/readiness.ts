@@ -120,7 +120,12 @@ async function checkIndexes(
   }
 }
 
-async function checkSearchIndex(
+/**
+ * Whether the Atlas Search index exists and can answer queries. Never throws:
+ * a database without Atlas Search is reported as UNAVAILABLE. GET /ready shows
+ * the result, and AtlasTextSearch asks it before it searches.
+ */
+export async function checkSearchIndex(
   db: Db,
   timeoutMs: number,
 ): Promise<ReadinessReport['search']> {

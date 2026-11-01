@@ -1,9 +1,20 @@
 # syntax=docker/dockerfile:1
 
 # Multi-stage build: compile with the full toolchain, ship only what runs.
-# Needs package-lock.json in the repository (npm ci installs exactly what it locks).
+#
+# `npm ci` installs exactly what package-lock.json locks, so the lockfile must be
+# committed and in step with package.json: run `npm install` after you change a
+# dependency, and commit the new lockfile.
+#
+# Node 22 is the LTS line NestJS 11 is built and tested on (D21 in docs/DECISIONS.md).
+#
+# Cloud: the image has no settings baked in. It listens on $PORT (3000 by default,
+# which is also what Cloud Run, Render and similar platforms inject), takes the
+# database from $MONGODB_URI (an Atlas mongodb+srv:// string works as is) and
+# answers GET /health for the platform's liveness check and GET /ready for
+# readiness. Everything it reads is in .env.example.
 
-FROM node:24-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -11,12 +22,12 @@ COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:24-slim AS prod-deps
+FROM node:22-slim AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM node:24-slim AS runtime
+FROM node:22-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules

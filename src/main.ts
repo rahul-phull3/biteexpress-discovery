@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 import type { Env } from './config/env.schema';
+import { DOCS_PATH, setupApiDocs } from './docs/api-docs';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
@@ -13,6 +14,10 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   const config = app.get<ConfigService<Env, true>>(ConfigService);
+  if (config.get('DOCS_ENABLED', { infer: true })) {
+    setupApiDocs(app);
+    new Logger('Bootstrap').log(`API documentation at /${DOCS_PATH}`);
+  }
   await app.listen(config.get('PORT', { infer: true }));
 }
 

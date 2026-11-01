@@ -184,6 +184,13 @@ export const listQuerySchema = z
 export type ListQuery = z.output<typeof listQuerySchema>;
 
 /**
+ * The names of the query parameters of GET /v1/restaurants, read from the schema
+ * itself. The OpenAPI document (src/docs) must list exactly these, and a test
+ * fails when it does not, so the published contract cannot drift from the code.
+ */
+export const LIST_PARAMETER_NAMES: readonly string[] = Object.keys(listQuerySchema.shape);
+
+/**
  * The query string of GET /v1/restaurants/search: everything the list takes,
  * and `q`, a sentence such as "best pizza in Gurgaon under Rs. 1000 for two".
  * `limit` has no default here, because the sentence may set it ("top 5") and an
@@ -208,3 +215,6 @@ export const searchQuerySchema = z
 
 /** A validated search query string. */
 export type SearchQuery = z.output<typeof searchQuerySchema>;
+
+/** The names of the query parameters of GET /v1/restaurants/search: the list's, and `q`. */
+export const SEARCH_PARAMETER_NAMES: readonly string[] = Object.keys(searchQuerySchema.shape);

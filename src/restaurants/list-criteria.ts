@@ -27,6 +27,14 @@ export interface ListCriteria {
    * `buildListCriteria` never does.
    */
   textWords?: string[];
+  /**
+   * The ids of the restaurants that Atlas Search chose for the words of a
+   * sentence. Only these can match, and every other filter still applies to
+   * them. An empty list matches nothing, which is not the same as no list. Not
+   * a request parameter: only the search sets it, and then instead of
+   * `textWords`, never together with it.
+   */
+  candidateIds?: string[];
   /** Exact city name as stored. */
   city?: string;
   /** ISO 3166-1 alpha-2. */
