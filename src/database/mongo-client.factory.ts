@@ -4,19 +4,20 @@ import type { Env } from '../config/env.schema';
 import { redactMongoUri } from './mongo-uri';
 
 /**
- * Creates the process-wide MongoClient and connects it. Connecting here, not
- * lazily on the first query, means a wrong address or a stopped database stops
- * the app at boot with a clear message instead of failing the first request.
+ * Creates a MongoClient and connects it. Connecting here, not lazily on the
+ * first query, means a wrong address or a stopped database stops the process
+ * at the start with a clear message instead of failing the first request. The
+ * API and the importer both use it.
+ *
+ * appName shows up in the server log and in db.currentOp(), which helps when
+ * several applications share one cluster.
  */
-export async function createMongoClient(
-  config: ConfigService<Env, true>,
+export async function connectMongo(
+  uri: string,
+  appName = 'biteexpress-discovery',
 ): Promise<MongoClient> {
-  const uri = config.get('MONGODB_URI', { infer: true });
-
   const client = new MongoClient(uri, {
-    // Shows up in the server log and in db.currentOp(), which helps when
-    // several applications share one cluster.
-    appName: 'biteexpress-discovery',
+    appName,
     // Give up after 5 seconds when nothing answers, not the 30 second default.
     serverSelectionTimeoutMS: 5000,
   });
@@ -32,4 +33,11 @@ export async function createMongoClient(
     );
   }
   return client;
+}
+
+/** The process-wide client of the API, from the validated configuration. */
+export function createMongoClient(
+  config: ConfigService<Env, true>,
+): Promise<MongoClient> {
+  return connectMongo(config.get('MONGODB_URI', { infer: true }));
 }

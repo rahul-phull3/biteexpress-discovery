@@ -1,12 +1,20 @@
 import { z } from 'zod';
 
 /**
+ * A tenant id is stored on every restaurant and leads every index. Letters,
+ * digits, underscore and hyphen keep it safe in logs and URLs; 64 is the
+ * length the collection validator allows.
+ */
+export const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
  * Single source of truth for configuration. ConfigModule validates the
  * environment (process.env plus .env) against this schema when the app boots,
  * so a bad value stops the process immediately instead of failing later.
  * Coercion and defaults apply to what ConfigService returns.
  *
- * A later step adds DEFAULT_TENANT_ID here.
+ * The importer reads the same schema, so `npm run import` and the API agree on
+ * the database and the tenant.
  */
 export const envSchema = z.object({
   NODE_ENV: z
@@ -31,6 +39,16 @@ export const envSchema = z.object({
     .regex(
       /^[A-Za-z0-9_-]{1,38}$/,
       'use 1 to 38 letters, digits, underscores or hyphens',
+    )
+    .default('biteexpress'),
+
+  // The tenant whose restaurants this process reads and writes. The importer
+  // stamps it on every document; the API scopes every query to it.
+  DEFAULT_TENANT_ID: z
+    .string()
+    .regex(
+      TENANT_ID_PATTERN,
+      'use 1 to 64 letters, digits, underscores or hyphens',
     )
     .default('biteexpress'),
 });

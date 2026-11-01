@@ -5,6 +5,7 @@ const defaults = {
   PORT: 3000,
   MONGODB_URI: 'mongodb://127.0.0.1:27017/?directConnection=true',
   MONGODB_DB: 'biteexpress',
+  DEFAULT_TENANT_ID: 'biteexpress',
 };
 
 describe('envSchema', () => {
@@ -58,6 +59,28 @@ describe('envSchema', () => {
     expect(envSchema.safeParse({ MONGODB_DB: 'x'.repeat(38) }).success).toBe(
       true,
     );
+  });
+
+  it('accepts a tenant id of letters, digits, underscores and hyphens', () => {
+    expect(
+      envSchema.parse({ DEFAULT_TENANT_ID: 'acme-eu_1' }).DEFAULT_TENANT_ID,
+    ).toBe('acme-eu_1');
+    expect(
+      envSchema.safeParse({ DEFAULT_TENANT_ID: 'x'.repeat(64) }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a tenant id the collection validator or a URL would not like', () => {
+    expect(envSchema.safeParse({ DEFAULT_TENANT_ID: '' }).success).toBe(false);
+    expect(envSchema.safeParse({ DEFAULT_TENANT_ID: 'a b' }).success).toBe(
+      false,
+    );
+    expect(envSchema.safeParse({ DEFAULT_TENANT_ID: 'a/b' }).success).toBe(
+      false,
+    );
+    expect(
+      envSchema.safeParse({ DEFAULT_TENANT_ID: 'x'.repeat(65) }).success,
+    ).toBe(false);
   });
 
   it('ignores variables it does not declare', () => {

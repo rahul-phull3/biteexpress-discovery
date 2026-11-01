@@ -7,6 +7,10 @@
 #   Whole stack in containers (demo):
 #     npm run stack:up     = docker compose up -d --build --wait --wait-timeout 300
 #
+#   Load the restaurants (a one-off job, not part of `up`):
+#     npm run import       on your machine (everyday)
+#     npm run db:import    in a container (see the importer service below)
+#
 # Full task guide: docs/RUNBOOK.md
 name: biteexpress
 
@@ -53,9 +57,38 @@ services:
       # database is a one-node replica set.
       MONGODB_URI: mongodb://mongodb:27017/?directConnection=true
       MONGODB_DB: ${MONGODB_DB:-biteexpress}
+      DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-biteexpress}
     ports:
       - "127.0.0.1:${API_PORT:-3000}:3000"
     restart: unless-stopped
+
+  # One-off job that loads the restaurants. The "tools" profile keeps it out of
+  # `docker compose up`; `docker compose run` starts it on request, and starts
+  # the database first if it is not running.
+  #
+  #   npm run db:import                      = docker compose run --rm --build importer
+  #   docker compose run --rm importer --file data/full/zomato.csv
+  #   docker compose run --rm importer --dry-run
+  #
+  # Anything after the service name replaces `command` below.
+  importer:
+    profiles: ["tools"]
+    build: .
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    entrypoint: ["node", "dist/importer/main.js"]
+    command: ["--file", "data/sample/zomato-sample.csv"]
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://mongodb:27017/?directConnection=true
+      MONGODB_DB: ${MONGODB_DB:-biteexpress}
+      DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-biteexpress}
+    volumes:
+      # The CSV files and text-fixes.json are not baked into the image (data/ is
+      # in .dockerignore): they are mounted, read-only, at the path the tool
+      # reads by default.
+      - ./data:/app/data:ro
 
 volumes:
   mongo-data:

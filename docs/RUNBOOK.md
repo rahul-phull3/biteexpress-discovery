@@ -1,9 +1,9 @@
 # Runbook: running, checking and testing BiteExpress locally
 
-How to start the database and the API, check that they work, look inside
-MongoDB, run every kind of test, and fix the usual problems. Commands are
-written for Windows PowerShell. The `npm` and `docker` commands work the same in
-any shell.
+How to start the database and the API, check that they work, load the
+restaurants, look inside MongoDB, run every kind of test, and fix the usual
+problems. Commands are written for Windows PowerShell. The `npm` and `docker`
+commands work the same in any shell.
 
 ## At a glance
 
@@ -24,6 +24,11 @@ any shell.
 | Stop everything, keep the data | `npm run db:down` |
 | Delete all local data and start clean | `npm run db:reset` |
 | Run the API and the database both in Docker | `npm run stack:up` |
+| Clean the sample and print the report, without touching the database | `npm run import:dry` |
+| Load the sample (500 restaurants) | `npm run import` |
+| Load the full dataset (9,551 restaurants) | `npm run import -- --file data/full/zomato.csv` |
+| Load the sample from inside a container | `npm run db:import` |
+| Check that `data/text-fixes.json` is current | `npm run import:fixes -- --check` |
 
 ## 1. What you need
 
@@ -32,6 +37,8 @@ any shell.
 - Free ports 27017 (MongoDB) and 3000 (API). Section 3.10 explains how to change them.
 - About 2 GB of free memory for the database container. It runs MongoDB and the
   Atlas Search process together.
+- Optional, to load the full dataset: the take-home archive unzipped into
+  `data/full/` (section 3.12). The 500-row sample needs nothing extra.
 
 ## 2. First-time setup
 
@@ -61,6 +68,20 @@ npm run start:dev
 ```
 
 `.env` must stay out of Git. If `git status` lists it, add it to `.gitignore`.
+
+Later steps are applied the same way. Step 3 adds the importer, the data files
+and one dependency (`csv-parse`):
+
+```powershell
+Expand-Archive -Path "$HOME\Downloads\step3-overlay.zip" -DestinationPath . -Force
+git status
+git diff package.json      # should show csv-parse and the four import scripts, nothing else
+npm install                # updates package-lock.json: commit it
+npm run check              # lint, type-check, unit and HTTP tests
+```
+
+`data/.gitignore` keeps the unzipped archive (`data/full/`) out of Git. Nothing
+else in `data/` is ignored: the sample and `text-fixes.json` are committed.
 
 ## 3. Everyday tasks
 
@@ -215,9 +236,9 @@ and acceptance for a valid restaurant and for one with an extra field.
 
 | Command | Needs | What it proves |
 | --- | --- | --- |
-| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition |
+| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator |
 | `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes |
-| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database |
+| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice |
 | `npm run check` | nothing | Lint, type-check, `npm test` and `npm run test:e2e`, stopping at the first failure |
 
 `npm run test:int` creates a throwaway database named `biteexpress_it_<random>`
@@ -300,6 +321,7 @@ with a message naming the setting.
 | `PORT` | `3000` | Port the API listens on |
 | `MONGODB_URI` | `mongodb://127.0.0.1:27017/?directConnection=true` | Connection string. Starts with `mongodb://` or `mongodb+srv://` |
 | `MONGODB_DB` | `biteexpress` | Database name: 1 to 38 letters, digits, `_` or `-` |
+| `DEFAULT_TENANT_ID` | `biteexpress` | The tenant that owns the imported restaurants: 1 to 64 letters, digits, `_` or `-`. `npm run import -- --tenant <id>` overrides it for one run |
 | `MONGO_PORT` | `27017` | Docker Compose only: the port published on your machine for MongoDB |
 | `API_PORT` | `3000` | Docker Compose only: the port published on your machine for the API container |
 
@@ -325,6 +347,157 @@ docker image inspect mongodb/mongodb-atlas-local:8.0 --format "{{index .RepoDige
 
 That prints `repository@sha256:<digest>`. In `docker-compose.yml`, change the
 line to `image: mongodb/mongodb-atlas-local:8.0@sha256:<digest>`.
+
+### 3.12 Load the restaurants
+
+The importer reads a Zomato CSV, applies the cleaning rules, writes the result to
+MongoDB and prints a report. Three commands, from the safest to the most complete:
+
+```powershell
+npm run import:dry                                  # clean and report; never connects to MongoDB
+npm run import                                      # load the 500-row sample
+npm run import -- --file data/full/zomato.csv       # load the full dataset
+```
+
+`npm run import` compiles the project first, then runs it. Everything after `--`
+goes to the importer. By default it reads the committed sample and
+`data/text-fixes.json`, so it works from a plain clone. The database must be
+running for the last two (`npm run db:up`).
+
+Running it again is safe. A restaurant is matched on tenant, source system and
+source id (the unique index `tenant_source_unique`), so a second run finds every
+restaurant and updates it in place: no duplicates, `createdAt` stays, `updatedAt`
+moves to the new run.
+
+**Load the full dataset and check it** (this is the "done when" of Step 3):
+
+1. Unzip the take-home archive into `data/full/`, so that
+   `data/full/zomato.csv` exists. Confirm Git ignores it:
+   `git check-ignore -v data/full/zomato.csv` prints the rule from
+   `data/.gitignore`.
+2. Start the database: `npm run db:up`.
+3. Run the import twice:
+
+```powershell
+npm run import -- --file data/full/zomato.csv
+npm run import -- --file data/full/zomato.csv
+```
+
+Both runs must end with `Result: PASS`. The first reports `inserted 9,551`; the
+second reports `inserted 0, matched 9,551`. Both end the numbers with
+`In the collection .......... 9,551 documents, 9,051 with a location`. To look
+for yourself, open `npm run db:shell` and run `db.restaurants.countDocuments()`.
+
+**Reading the report:**
+
+```text
+Import report
+-------------
+File ....................... data/sample/zomato-sample.csv
+Target ..................... biteexpress.restaurants, tenant "biteexpress"
+Rows read .................. 500
+Rows imported .............. 500
+Rows rejected .............. 0
+Texts repaired ............. 70 (166 fixes loaded)
+With a location ............ 439
+Without a location ......... 61
+Rated ...................... 382
+Not rated .................. 118
+Cost unknown ............... 18
+No cuisines ................ 9
+Distinct cuisines .......... 91
+By country ................. IN 355, US 30, BR 24, TR 20, AE 10, QA 8, ZA 8, ...
+Written .................... inserted 500, matched 0, modified 0, failed 0
+In the collection .......... 500 documents, 439 with a location
+
+No expected numbers for this file: they exist for the full 9,551-row dataset only.
+
+Result: PASS
+```
+
+| Line | Meaning |
+| --- | --- |
+| Rows read, imported, rejected | Rows in the CSV; rows that passed every rule and were written; rows a rule refused. Up to 10 refused rows are listed with their id and the reason |
+| Texts repaired | Restaurants whose name, address, city or locality was replaced from `data/text-fixes.json` (flag `text_repaired`). The number in brackets is how many fixes the file holds |
+| With and without a location | Restaurants stored with a GeoJSON point, and those whose source coordinates were unusable (flag `coords_missing`). The latter are kept, but no distance query returns them |
+| Rated and not rated | A rating above 0, and a rating of 0, which is stored as no average, no label and no score |
+| Cost unknown | A cost for two of 0, stored as `null` |
+| No cuisines | Rows whose cuisine list is empty |
+| Distinct cuisines | Different cuisine names after cleaning |
+| By country | Restaurants per ISO country code |
+| Written | What MongoDB did. `inserted`: new documents. `matched`: existing documents the upsert found. `modified`: of those, how many changed (all of them on a rerun, because `updatedAt` moves). `failed`: restaurants the database refused; they are listed with the reason |
+| In the collection | What the database holds for this tenant afterwards |
+
+For the full 9,551-row file the report ends with "Checks against the full
+dataset". Each line is `[ok]`, or `[FAIL] label: expected X, got Y`. A failed
+check, a rejected row or a refused write makes the result `FAIL`.
+
+The exit code says the same thing: `0` for `PASS`, `1` when the run did not
+succeed (unreadable file, database unreachable, rejected rows, refused writes, a
+failed check), `2` for a wrong command line or configuration. In PowerShell,
+`$LASTEXITCODE` shows it. After a non-zero exit, npm adds its own "command
+failed" lines; the report above them is what matters.
+
+**Options:**
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--file <path>` | `data/sample/zomato-sample.csv` | The CSV to import |
+| `--text-fixes <path>` | `data/text-fixes.json` | Corrected texts by restaurant id |
+| `--tenant <id>` | `DEFAULT_TENANT_ID` (`biteexpress`) | The tenant that owns the data |
+| `--batch-size <n>` | `1000` | Restaurants per bulk write, 1 to 10000 |
+| `--dry-run` | off | Clean and report only; does not connect to MongoDB |
+| `-h`, `--help` | | Show the usage text |
+
+**In a container instead:**
+
+```powershell
+npm run db:import                                                       # the sample
+docker compose run --rm --build importer --file data/full/zomato.csv    # the full dataset
+docker compose run --rm --build importer --dry-run
+```
+
+The `importer` service in `docker-compose.yml` is a one-off job in the `tools`
+profile, so `docker compose up` never starts it. It builds the same image as the
+API, mounts `./data` read-only, reaches the database as `mongodb:27017`, and
+starts the database first if it is not running. The first run builds the image,
+which takes a few minutes.
+
+**Look at what was loaded:**
+
+```powershell
+npm run db:shell
+```
+
+```js
+db.restaurants.countDocuments()
+db.restaurants.findOne({ 'source.id': '308022' })
+db.restaurants.find({ dataQuality: 'coords_missing' }, { name: 1, 'address.city': 1 }).limit(5)
+db.restaurants.aggregate([
+  { $geoNear: { near: { type: 'Point', coordinates: [77.0886879, 28.4952079] }, distanceField: 'meters', query: { tenantId: 'biteexpress' } } },
+  { $limit: 5 },
+  { $project: { _id: 0, name: 1, city: '$address.city', meters: { $round: ['$meters', 0] } } },
+])
+```
+
+The last query asks for the five restaurants nearest to Farzi Cafe in Gurgaon. The
+first row is Farzi Cafe itself, at 0 metres.
+
+To start over with an empty database, `npm run db:reset` then `npm run db:up`,
+then import again.
+
+### 3.13 Rebuild or check the text fixes
+
+`data/text-fixes.json` is committed, so you only need this if you change how
+damaged text is detected. It compares the full CSV with the Zomato API dumps in
+`data/full/` and writes down the difference:
+
+```powershell
+npm run import:fixes -- --check    # change nothing; exit code 1 if the file is out of date
+npm run import:fixes               # rewrite data/text-fixes.json if it would change
+```
+
+`data/README.md` explains what is damaged in the CSV and why the dumps stay out of Git.
 
 ## 4. What happens when the API starts
 
@@ -381,7 +554,18 @@ search falls back to the rule-based path (arrives with the search step).
 | `npm run test:int` fails with `MongoServerSelectionError` | The database is not running | `npm run db:up` |
 | `npm run test:int` was killed and left `biteexpress_it_...` databases behind | The cleanup step did not run | `npm run db:shell`, then `db.adminCommand({ listDatabases: 1 }).databases.map(d => d.name)` and `db.getSiblingDB('biteexpress_it_xxxx').dropDatabase()` for each leftover |
 | `docker compose exec ... /scripts/...` fails in Git Bash with a strange Windows path | Git Bash rewrites paths that start with `/` | Use the npm scripts (`npm run db:inspect`), or prefix the command with `MSYS_NO_PATHCONV=1` |
-| Database data seems gone | `npm run db:reset` or `docker compose down -v` was run | Expected: that deletes the volumes. Re-run the import (Step 3) |
+| Database data seems gone | `npm run db:reset` or `docker compose down -v` was run | Expected: that deletes the volumes. Run `npm run import` again |
+| `npm run import`: `The import stopped: Could not connect to MongoDB at ...` | The database is not running, or `MONGODB_URI` is wrong | `npm run db:up`; check `.env`. Nothing was written, so run it again |
+| `npm run import`: `Result: FAIL` and a `Rejected rows` list | A row broke a hard rule (for example an unknown country code or an empty name). Nothing is skipped silently | Read the ids and reasons. The other rows were written; fix the file and run again |
+| `npm run import`: `Result: FAIL` and a `Rows the database refused` list | The collection validator refused a document | The reason names the rule. The rest of the batch was written. Compare the document with `src/database/restaurants.collection.ts` |
+| `npm run import`: a `[FAIL]` line under `Checks against the full dataset` | The file is not the take-home `zomato.csv`, it was changed or truncated, or a cleaning rule changed | Compare `expected` with `got`. If you changed a rule on purpose, update `src/importer/expected-report.ts` and the unit test that pins it |
+| `npm run import`: `Cannot find module 'csv-parse/sync'` | Dependencies are not installed | `npm install` |
+| `npm run import`: `Could not read the CSV file "data/full/zomato.csv"` | The archive is not unzipped there, or the path is wrong | Unzip it so that `data/full/zomato.csv` exists, or pass the right path with `--file` |
+| `npm run import`: `The CSV is missing the column(s) ...` | The file is not a Zomato CSV, or its header was changed | The message lists the missing columns and the header it found |
+| `npm run import`: `Could not read the text fixes file` | `data/text-fixes.json` is missing or was changed into something that is not valid | Restore it from Git (`git checkout data/text-fixes.json`), or rebuild it with `npm run import:fixes` |
+| `git status` lists `data/full/` | `data/.gitignore` is missing | Unzip the Step 3 files again. Never commit the dumps: each record carries an API key |
+| API terminal says `Cannot find module '.../dist/...'` right after `npm run import` | Both `start:dev` and `npm run import` build into `dist/`, and the import's build replaced it while the API was restarting | Stop the API and start it again |
+| `npm run db:import`: `no such file or directory` for `data/...` | The `./data` folder is not shared with Docker Desktop, or the path after `--file` is wrong | Check Docker Desktop's file sharing. The path is relative to `/app`, so `data/full/zomato.csv` |
 
 When you report a problem, include the output of `docker compose ps`, the last
 lines of `npm run db:logs`, and the full API error.
@@ -390,7 +574,7 @@ lines of `npm run db:logs`, and the full API error.
 
 | Path | Purpose |
 | --- | --- |
-| `docker-compose.yml` | The `mongodb` service (Atlas Local, data volumes, port bound to 127.0.0.1) and the `api` service for demo mode |
+| `docker-compose.yml` | The `mongodb` service (Atlas Local, data volumes, port bound to 127.0.0.1), the `api` service for demo mode and the `importer` job (profile `tools`) |
 | `Dockerfile`, `.dockerignore` | Multi-stage build of the API image: compile, install production dependencies only, run as the non-root `node` user, health check on `/health` |
 | `src/config/env.schema.ts` | Every setting, its type, range and default |
 | `src/database/restaurants.collection.ts` | The restaurants validator, the four indexes and the search index definition, as plain data |
@@ -400,9 +584,14 @@ lines of `npm run db:logs`, and the full API error.
 | `src/database/database.module.ts` | Provides `MONGO_CLIENT` and `MONGO_DB`; closes the client on shutdown |
 | `src/health/health.controller.ts` | `GET /health`: liveness, never touches MongoDB |
 | `src/health/ready.controller.ts`, `src/health/readiness.ts` | `GET /ready`: readiness, pings MongoDB and checks the indexes |
+| `src/importer/` | The importer. `clean-row.ts` holds every cleaning rule, `import-restaurants.ts` batches and counts, `mongo-restaurant-sink.ts` builds the upserts, `import-report.ts` and `expected-report.ts` print and check the report, `import-cli.ts` reads the command line and `main.ts` is the entry point |
+| `src/importer/*.spec.ts` | Unit tests for each of those. `sample-data.spec.ts` cleans the committed sample for real and checks it against known numbers and the collection validator |
+| `data/` | The 500-row sample and `text-fixes.json`; `full/` is for the unzipped archive and is ignored by Git. `data/README.md` explains each file |
 | `scripts/mongosh/` | The scripts behind `npm run db:inspect` and `npm run db:validator-demo` |
 | `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, and the per-run test-database setup |
 | `test/mongo.int-spec.ts` | Integration tests against a real MongoDB |
+| `test/importer.int-spec.ts` | Integration tests for the importer against a real MongoDB |
+| `test/support/zomato-rows.ts`, `test/support/json-schema-lite.ts` | A builder for CSV rows, and a small checker that says whether the collection validator would accept a document, so `npm test` can prove it without a database |
 
 ## 8. Design decisions worth being able to explain
 
@@ -443,11 +632,44 @@ lines of `npm run db:logs`, and the full API error.
 - **Three layers of tests.** Unit tests for logic, HTTP tests with a fake database
   for the API contract, and integration tests against a real MongoDB for what only a
   real server can prove. Each integration run uses its own throwaway database.
+- **The importer is a command, not part of the API.** It is a one-off job with no
+  HTTP surface, run from a terminal or from a container, so a failed import cannot
+  take the API down. It shares the settings schema and the collection definition
+  with the API, so both agree on database, tenant and shape.
+- **Cleaning is pure, writing is in one place.** `cleanRow` turns a CSV row into a
+  restaurant, or into the reason it is refused, using no database and no clock. A
+  small sink interface hides MongoDB, so the same code serves the dry run, the
+  real run and the tests.
+- **Idempotent by key.** The import upserts on tenant, source system and source
+  id instead of clearing the collection first. A rerun updates in place, keeps
+  `createdAt` (`$setOnInsert`) and leaves fields the importer does not own alone.
+  Trade-off: `updatedAt` moves on every run, so a rerun reports every document as
+  modified. A content hash would avoid that; it is not worth it for 9,551 rows.
+- **Bad data stays visible.** Unusable coordinates keep the restaurant but drop
+  `location` and add the flag `coords_missing`; repaired text adds `text_repaired`.
+  A row that breaks a hard rule is rejected and listed, never dropped silently.
+- **One bad row costs one row.** Writes are unordered bulk upserts of up to 1,000.
+  If the collection validator refuses a document, the rest of the batch is still
+  written and the refused one is reported by source id.
+- **Expected numbers are part of the tool.** The full dataset has a known shape
+  (9,551 rows, 166 repaired texts, 9,051 with a location, and so on). The report
+  compares a run with it, so a changed rule, a truncated file or a wrong encoding
+  fails loudly instead of loading quietly different data. This applies only to the
+  full file, which is recognised by its row count.
+- **Repair damaged text from a reference, never by guessing.** The CSV is read
+  byte for byte as Latin-1. Damaged letters are replaced from `text-fixes.json` by
+  restaurant id, built once from the API dumps, because a rule that guesses
+  could corrupt a name that was correct.
 
 ## 9. Not covered yet
 
-- The data import (Step 3), the create and fetch endpoints (Step 4), the list
-  endpoint (Step 5) and search queries (Step 7) are not part of this step.
+- The create and fetch endpoints (Step 4), the list endpoint (Step 5) and the
+  search queries (Step 7) are not built yet.
+- The importer never deletes. A restaurant that disappears from the CSV stays in
+  the database; there is no mode that removes what a file no longer lists.
+- The image URL, menu URL and zip code that the API dumps carry are not imported
+  (see `data/README.md`). The validator allows them, so adding them later needs no
+  migration.
 - The local database has no authentication. That is acceptable on a laptop with
   the port bound to 127.0.0.1; it is not acceptable anywhere else.
 - The Atlas Search index definition is a baseline. The search step extends it with

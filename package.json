@@ -30,6 +30,10 @@
     "db:shell": "docker compose exec mongodb mongosh biteexpress",
     "db:inspect": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/inspect.js",
     "db:validator-demo": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/validator-demo.js",
+    "db:import": "docker compose run --rm --build importer",
+    "import": "nest build && node dist/importer/main.js",
+    "import:dry": "nest build && node dist/importer/main.js --dry-run",
+    "import:fixes": "nest build && node dist/importer/build-text-fixes.main.js",
     "stack:up": "docker compose up -d --build --wait --wait-timeout 300"
   },
   "dependencies": {
@@ -37,6 +41,7 @@
     "@nestjs/config": "^12.0.0",
     "@nestjs/core": "^12.0.0",
     "@nestjs/platform-express": "^12.0.0",
+    "csv-parse": "^7.0.3",
     "mongodb": "^7.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
