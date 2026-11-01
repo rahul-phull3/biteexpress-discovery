@@ -53,6 +53,27 @@ describe('buildFilter', () => {
     expect(name).toEqual({ $regex: '\\.\\*', $options: 'i' });
   });
 
+  it('requires each word of a free-text search in the name or in the locality', () => {
+    expect(filterOf({ textWords: ['vada', 'pav'] }).$and).toEqual([
+      { $or: [{ name: { $regex: 'vada', $options: 'i' } }, { 'address.locality': { $regex: 'vada', $options: 'i' } }] },
+      { $or: [{ name: { $regex: 'pav', $options: 'i' } }, { 'address.locality': { $regex: 'pav', $options: 'i' } }] },
+    ]);
+  });
+
+  it('matches the words of a free-text search literally and leaves the name filter alone', () => {
+    const filter = filterOf({ nameContains: 'dosa', textWords: ['.*', '(bar)'] });
+
+    expect(filter.name).toEqual({ $regex: 'dosa', $options: 'i' });
+    expect(filter.$and).toEqual([
+      { $or: [{ name: { $regex: '\\.\\*', $options: 'i' } }, { 'address.locality': { $regex: '\\.\\*', $options: 'i' } }] },
+      { $or: [{ name: { $regex: '\\(bar\\)', $options: 'i' } }, { 'address.locality': { $regex: '\\(bar\\)', $options: 'i' } }] },
+    ]);
+  });
+
+  it('adds no clause for an empty list of words', () => {
+    expect(filterOf({ textWords: [] })).toEqual({ tenantId: 't1', status: 'active' });
+  });
+
   it('asks for at least the minimum average rating', () => {
     expect(filterOf({ minRating: 4 })['rating.average']).toEqual({ $gte: 4 });
   });
@@ -236,6 +257,13 @@ describe('buildMongoListQuery with a point', () => {
     const geoNear = pipelineOf({ sort: 'cost', order: 'asc' })[0]?.$geoNear as Document;
 
     expect(geoNear.query['cost.forTwo']).toEqual({ $ne: null });
+  });
+
+  it('applies the words of a free-text search inside $geoNear, where the index can use the tenant', () => {
+    const geoNear = pipelineOf({ textWords: ['vada', 'pav'] })[0]?.$geoNear as Document;
+
+    expect(geoNear.query.tenantId).toBe('t1');
+    expect(geoNear.query.$and).toHaveLength(2);
   });
 });
 

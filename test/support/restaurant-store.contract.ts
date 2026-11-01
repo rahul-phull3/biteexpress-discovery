@@ -180,7 +180,9 @@ type Key = 'R1' | 'R2' | 'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8' | 'R9' | 'R10' 
  *   R12  Dollar Deluxe           New York   American, Steak            3.8   200  3.70   600 USD    no   yes  11775.0 km
  *
  * R8 and R9 tie on every rating value, so only the id can order them. P is
- * Cyber Hub, Gurgaon (28.495 N, 77.089 E). The tenant also has an inactive
+ * Cyber Hub, Gurgaon (28.495 N, 77.089 E). Every locality is "Central" except
+ * R4's (Golf Course Road) and R9's (Girgaum), which the free-text tests look for.
+ * The tenant also has an inactive
  * restaurant and a neighbour tenant has an excellent one, both at P: neither
  * may ever appear.
  */
@@ -198,6 +200,9 @@ const NAME: Record<Key, string> = {
   R11: 'Maple Diner',
   R12: 'Dollar Deluxe',
 };
+
+/** The locality of the restaurants that do not have the default one. */
+const LOCALITY: Partial<Record<Key, string>> = { R4: 'Golf Course Road', R9: 'Girgaum' };
 
 /** Cyber Hub, Gurgaon. */
 const P = { latitude: 28.495, longitude: 77.089 };
@@ -228,7 +233,7 @@ function fixtureRows(tenant: string): Array<[Key, RestaurantDocument]> {
     key,
     aRestaurantDocument(tenant, {
       name: NAME[key],
-      address: { line: `${key} Road`, locality: 'Central', city, country },
+      address: { line: `${key} Road`, locality: LOCALITY[key] ?? 'Central', city, country },
       cuisines,
       ...extra,
     }),
@@ -396,6 +401,41 @@ export function describeRestaurantListContract(
         expect(await names({ nameContains: '(bar)' })).toEqual(inOrder('R10'));
         expect(await names({ nameContains: '.' })).toEqual([]);
         expect(await names({ nameContains: '[main]' })).toEqual(inOrder('R10'));
+      });
+
+      it('needs every word of a free-text search, in any letter case, in the name or the locality', async () => {
+        expect(await names({ textWords: ['vada', 'pav'] })).toEqual(inOrder('R8'));
+        expect(await names({ textWords: ['PAV', 'Junction'] })).toEqual(inOrder('R8'));
+        expect(await names({ textWords: ['pav', 'vada'] })).toEqual(inOrder('R8'));
+        expect(await names({ textWords: ['dosa'] })).toEqual(inOrder('R1', 'R3'));
+        // No restaurant has both words.
+        expect(await names({ textWords: ['vada', 'dosa'] })).toEqual([]);
+      });
+
+      it('lets one word sit in the name and the next in the locality', async () => {
+        // R4 is "Spice Route" in "Golf Course Road"; R9 is "Bombay Chowpatty" in "Girgaum".
+        expect(await names({ textWords: ['golf'] })).toEqual(inOrder('R4'));
+        expect(await names({ textWords: ['spice', 'golf'] })).toEqual(inOrder('R4'));
+        expect(await names({ textWords: ['chowpatty', 'GIRGAUM'] })).toEqual(inOrder('R9'));
+        expect(await names({ textWords: ['spice', 'girgaum'] })).toEqual([]);
+      });
+
+      it('takes the words of a free-text search literally, like a name', async () => {
+        expect(await names({ textWords: ['.'] })).toEqual([]);
+        expect(await names({ textWords: ['(bar)'] })).toEqual(inOrder('R10'));
+        expect(await names({ textWords: ['[main]'] })).toEqual(inOrder('R10'));
+        expect(await names({ textWords: ['.*'] })).toEqual([]);
+      });
+
+      it('combines the words with every other filter, name included', async () => {
+        expect(await names({ city: 'Gurgaon', textWords: ['dosa'] })).toEqual(inOrder('R1', 'R3'));
+        expect(await names({ city: 'Mumbai', textWords: ['dosa'] })).toEqual([]);
+        expect(await names({ nameContains: 'dosa', textWords: ['plaza'] })).toEqual(inOrder('R3'));
+        expect(await names({ nameContains: 'dosa', textWords: ['spice'] })).toEqual([]);
+      });
+
+      it('does not filter when the list of words is empty', async () => {
+        expect(await names({ textWords: [] })).toHaveLength(12);
       });
 
       it('matches any of several cuisines by default', async () => {
@@ -608,6 +648,22 @@ export function describeRestaurantListContract(
 
         // R6 serves South Indian too, but has no coordinates.
         expect(namesOf(result)).toEqual(inOrder('R1', 'R2', 'R3'));
+      });
+
+      it('applies the words of a free-text search to the restaurants around the point', async () => {
+        const result = await list({
+          near: { ...P, radiusKm: 25 },
+          textWords: ['dosa'],
+          sort: 'distance',
+          order: 'asc',
+        });
+
+        // R3 ("Dosa Plaza & Co") is 2 km away; the neighbour tenant's "Neighbour Dosa" is at the point but not visible.
+        expect(namesOf(result)).toEqual(inOrder('R1', 'R3'));
+
+        // A word that only the locality has.
+        const golf = await list({ near, sort: 'distance', order: 'asc', textWords: ['golf'] });
+        expect(namesOf(golf)).toEqual(inOrder('R4'));
       });
 
       it('can order the restaurants around the point some other way and still report the distance', async () => {

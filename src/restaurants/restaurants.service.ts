@@ -3,15 +3,21 @@ import { conflictProblem, notFoundProblem } from '../http/problem';
 import { buildRestaurantDocument } from './build-restaurant';
 import type { CreateRestaurantInput } from './create-restaurant.schema';
 import { buildListCriteria } from './list-criteria';
-import type { ListQuery } from './list-query.schema';
+import type { ListQuery, SearchQuery } from './list-query.schema';
 import { toResource, type RestaurantResource } from './restaurant.resource';
 import { toListItem, type RestaurantListResponse } from './restaurant.list-item';
+import type { RestaurantSearchResponse } from './restaurant.search-response';
 import {
   DuplicateSourceError,
   RESTAURANT_STORE,
   type RestaurantStore,
 } from './restaurant.store';
+import { mergeSearch, summarizeSearch } from './search-query';
+import { parseSearchText, type ParsedSearch } from './search-text';
 import { VocabularyService } from './vocabulary.service';
+
+/** What a request without a sentence says: nothing, so the parameters alone decide. */
+const NO_TEXT: ParsedSearch = { filters: {}, words: [], locationWanted: false, notes: [], priceNotes: [], radiusNotes: [] };
 
 /** The use cases of the restaurant resource. Natural language search is added on top of `list`. */
 @Injectable()
@@ -72,6 +78,46 @@ export class RestaurantsService {
         sort: criteria.sort,
         order: criteria.order,
         tookMs: Math.round(performance.now() - started),
+      },
+    };
+  }
+
+  /**
+   * The list, with a sentence. The sentence is read into the parameters of
+   * `list` (see parseSearchText), the request's own parameters win where both
+   * speak (see mergeSearch), and the same store query runs. The response is the
+   * list's, plus `interpretation`, which says how the request was read.
+   * `request` is already validated.
+   */
+  async search(tenantId: string, request: SearchQuery): Promise<RestaurantSearchResponse> {
+    const started = performance.now();
+    const vocabulary = await this.vocabulary.get(tenantId);
+    const parsed = request.q === undefined ? NO_TEXT : parseSearchText(request.q, vocabulary);
+    const merged = mergeSearch(request, parsed);
+
+    const criteria = buildListCriteria(merged.query, vocabulary);
+    if (merged.words.length > 0) criteria.textWords = merged.words;
+    const { items, hasMore } = await this.store.list(tenantId, criteria);
+
+    const notes = [...merged.notes];
+    if (items.length === 0 && criteria.offset === 0 && merged.words.length > 0) {
+      notes.push('No restaurant has all of these words in its name or area. Fewer words will match more.');
+    }
+    return {
+      data: items.map(toListItem),
+      page: { limit: criteria.limit, offset: criteria.offset, hasMore },
+      meta: {
+        sort: criteria.sort,
+        order: criteria.order,
+        tookMs: Math.round(performance.now() - started),
+      },
+      interpretation: {
+        q: merged.q,
+        summary: summarizeSearch(criteria),
+        filters: merged.fromText,
+        words: merged.words,
+        overridden: merged.overridden,
+        notes,
       },
     };
   }

@@ -26,6 +26,7 @@ import { buildMongoListQuery, buildVocabularyPipelines, type MongoListQuery } fr
 import { MongoRestaurantStore } from '../src/restaurants/mongo-restaurant.store';
 import type { RestaurantListResponse } from '../src/restaurants/restaurant.list-item';
 import type { RestaurantResource } from '../src/restaurants/restaurant.resource';
+import type { RestaurantSearchResponse } from '../src/restaurants/restaurant.search-response';
 import {
   aRestaurantDocument,
   describeRestaurantListContract,
@@ -126,6 +127,8 @@ describe('the listing queries on real data', () => {
       ['a country, best first', { countryCode: 'IN' }],
       ['a rating bound', { minRating: 4 }],
       ['a part of a name', { nameContains: 'place 1' }],
+      ['search words in the name or area', { textWords: ['place', '1'] }],
+      ['search words and a city', { city: 'Gurgaon', textWords: ['place'] }],
       ['a price filter', { currency: 'INR', maxCost: 900 }],
       ['the cheapest first', { sort: 'cost', order: 'asc' }],
       ['by name', { sort: 'name', order: 'asc' }],
@@ -143,6 +146,17 @@ describe('the listing queries on real data', () => {
       const near = { latitude: 28.4595, longitude: 77.0266 };
 
       const plan = await planOf(buildMongoListQuery(tenant, criteria({ near, sort: 'distance', order: 'asc' })));
+
+      expect(plan).toContain('tenant_location_2dsphere');
+      expect(plan).not.toContain('COLLSCAN');
+    });
+
+    it('nearest first with search words uses the 2dsphere index too', async () => {
+      const near = { latitude: 28.4595, longitude: 77.0266 };
+
+      const plan = await planOf(
+        buildMongoListQuery(tenant, criteria({ near, sort: 'distance', order: 'asc', textWords: ['place', '1'] })),
+      );
 
       expect(plan).toContain('tenant_location_2dsphere');
       expect(plan).not.toContain('COLLSCAN');
@@ -323,6 +337,51 @@ describe('the API on a real MongoDB', () => {
     ]);
     expect(page.meta).toMatchObject({ sort: 'distance', order: 'asc' });
     expect((everywhere.body as RestaurantListResponse).data.map((item) => item.name)).toEqual(['Zambar', 'Naivedhyam']);
+  });
+
+  it('answers the three questions of the brief from real data', async () => {
+    const tenant = freshTenant('http');
+    const naivedhyam = { ...body, cost: { forTwo: 800 } };
+    const zambar = {
+      ...body,
+      name: 'Zambar',
+      location: { latitude: 28.495, longitude: 77.089 },
+      cost: { forTwo: 1200 },
+      rating: { average: 4, votes: 802 },
+    };
+    const goli = {
+      name: 'Goli Vada Pav No. 1',
+      address: { city: 'New Delhi', countryCode: 'IN' },
+      location: { latitude: 28.6315, longitude: 77.2167 },
+      cuisines: ['Street Food'],
+    };
+    const junction = {
+      name: 'Vada Pav Junction',
+      address: { locality: 'Cyber Hub', city: 'Gurgaon', countryCode: 'IN' },
+      location: { latitude: 28.46, longitude: 77.03 },
+      cuisines: ['Fast Food'],
+    };
+    for (const restaurant of [naivedhyam, zambar, goli, junction]) {
+      await request(app.getHttpServer()).post('/v1/restaurants').set('X-Tenant-Id', tenant).send(restaurant).expect(201);
+    }
+    const search = async (sentence: string, where = ''): Promise<RestaurantSearchResponse> =>
+      (
+        await request(app.getHttpServer())
+          .get(`/v1/restaurants/search?q=${encodeURIComponent(sentence)}${where}`)
+          .set('X-Tenant-Id', tenant)
+          .expect(200)
+      ).body as RestaurantSearchResponse;
+    const names = (response: RestaurantSearchResponse) => response.data.map((item) => item.name);
+
+    expect(names(await search('Best restaurants in Gurgaon with South Indian Food'))).toEqual(['Naivedhyam', 'Zambar']);
+    // Zambar costs 1200 for two, Vada Pav Junction has no cost on record.
+    expect(names(await search('Restaurants in Gurgaon under Rs. 1000 for two'))).toEqual(['Naivedhyam']);
+
+    const nearest = await search('Nearest place that serves Vada Pav', '&lat=28.495&lng=77.089');
+    expect(names(nearest)).toEqual(['Vada Pav Junction', 'Goli Vada Pav No. 1']);
+    expect(nearest.data[0]?.distanceKm).toBeCloseTo(6.97, 1);
+    expect(nearest.data[1]?.distanceKm).toBeCloseTo(19.67, 1);
+    expect(nearest.interpretation.words).toEqual(['vada', 'pav']);
   });
 
   it('sees a restaurant in a brand-new city at once, in any letter case', async () => {

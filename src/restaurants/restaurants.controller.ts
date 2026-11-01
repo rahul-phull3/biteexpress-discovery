@@ -16,9 +16,15 @@ import {
   createRestaurantSchema,
   type CreateRestaurantInput,
 } from './create-restaurant.schema';
-import { listQuerySchema, type ListQuery } from './list-query.schema';
+import {
+  listQuerySchema,
+  searchQuerySchema,
+  type ListQuery,
+  type SearchQuery,
+} from './list-query.schema';
 import { RestaurantIdPipe } from './restaurant-id';
 import type { RestaurantListResponse } from './restaurant.list-item';
+import type { RestaurantSearchResponse } from './restaurant.search-response';
 import type { RestaurantResource } from './restaurant.resource';
 import { RestaurantsService } from './restaurants.service';
 
@@ -77,6 +83,20 @@ export class RestaurantsController {
     res.setHeader('Cache-Control', LIST_CACHE_CONTROL);
     res.setHeader('Vary', 'X-Tenant-Id');
     return page;
+  }
+
+  /** The list, with a sentence in `q`. Above `:id`, which would take "search" for an id. */
+  @Get('search')
+  async search(
+    @TenantId() tenantId: string,
+    @Query(new ZodValidationPipe(searchQuerySchema, 'query')) query: SearchQuery,
+    @Res({ passthrough: true }) res: HeaderWriter,
+  ): Promise<RestaurantSearchResponse> {
+    const response = await this.restaurants.search(tenantId, query);
+    // Set after the search, so an error response is never cached.
+    res.setHeader('Cache-Control', LIST_CACHE_CONTROL);
+    res.setHeader('Vary', 'X-Tenant-Id');
+    return response;
   }
 
   @Get(':id')

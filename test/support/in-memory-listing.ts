@@ -58,6 +58,11 @@ function matches(doc: RestaurantDocument, tenantId: string, c: ListCriteria): bo
   if (c.nameContains !== undefined && !doc.name.toLowerCase().includes(c.nameContains.toLowerCase())) {
     return false;
   }
+  if (c.textWords !== undefined) {
+    const places = [doc.name, doc.address.locality ?? ''].map((place) => place.toLowerCase());
+    const found = (word: string) => places.some((place) => place.includes(word.toLowerCase()));
+    if (!c.textWords.every(found)) return false;
+  }
   if (c.cuisines !== undefined) {
     const wanted = c.cuisines;
     const serves = (cuisine: string) => doc.cuisines.includes(cuisine);

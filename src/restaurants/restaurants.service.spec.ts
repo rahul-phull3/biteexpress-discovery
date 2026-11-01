@@ -1,7 +1,7 @@
 import { InMemoryRestaurantStore } from '../../test/support/in-memory-restaurant-store';
 import { ProblemException } from '../http/problem';
 import { createRestaurantSchema } from './create-restaurant.schema';
-import { listQuerySchema } from './list-query.schema';
+import { listQuerySchema, searchQuerySchema } from './list-query.schema';
 import type { RestaurantStore } from './restaurant.store';
 import { RestaurantsService } from './restaurants.service';
 import { VocabularyService } from './vocabulary.service';
@@ -233,6 +233,284 @@ describe('RestaurantsService', () => {
       await expect(service.list('tenant-a', listQuery())).rejects.toThrow('connection reset');
       await expect(service.list('tenant-a', listQuery())).resolves.toHaveProperty('data');
       expect(spy).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('search', () => {
+    // Cyber Hub, Gurgaon: the point the "nearest" examples measure from.
+    const here = { lat: '28.495', lng: '77.089' };
+    const place = (name: string, extra: object = {}) => input({ name, ...extra });
+    const where = (city: string, locality: string | null = null) => ({
+      address: { city, locality, countryCode: 'IN' },
+    });
+    const at = (latitude: number, longitude: number) => ({ location: { latitude, longitude } });
+    const request = (parameters: Record<string, unknown>) => searchQuerySchema.parse(parameters);
+    const namesOf = (response: { data: Array<{ name: string }> }) => response.data.map((item) => item.name);
+    const asQuery = (filters: object) =>
+      Object.fromEntries(Object.entries(filters).map(([key, value]) => [key, Array.isArray(value) ? value : String(value)]));
+
+    beforeEach(async () => {
+      const restaurants: Array<[string, string, object]> = [
+        ['Naivedhyam', 'tenant-a', { ...where('Gurgaon'), cuisines: ['South Indian'], rating: { average: 4.4, votes: 800 }, cost: { forTwo: 700 }, ...at(28.495, 77.089) }],
+        ['Chennai Express', 'tenant-a', { ...where('Gurgaon'), cuisines: ['South Indian', 'Chinese'], rating: { average: 3.9, votes: 300 }, cost: { forTwo: 450 }, ...at(28.504, 77.089) }],
+        ['Spice Route', 'tenant-a', { ...where('Gurgaon'), cuisines: ['North Indian'], rating: { average: 4.0, votes: 500 }, cost: { forTwo: 1500 }, ...at(28.54, 77.089) }],
+        ['Goli Vada Pav No. 1', 'tenant-a', { ...where('Gurgaon', 'DLF Phase 3'), cuisines: ['Street Food'], rating: { average: 4.1, votes: 900 }, cost: { forTwo: 250 }, ...at(28.4937, 77.0987) }],
+        ['Just Vada Pav', 'tenant-a', { ...where('New Delhi', 'Kalkaji'), cuisines: ['Street Food'], rating: { average: 4.6, votes: 3000 }, cost: { forTwo: 200 }, ...at(28.5494, 77.2588) }],
+        ['Pune Place', 'tenant-a', { ...where('Pune'), cuisines: ['Cafe'], rating: { average: 4.5, votes: 50 }, cost: { forTwo: 600 }, ...at(18.5204, 73.8567) }],
+        ['Their Vada Pav', 'tenant-b', { ...where('New Delhi'), cuisines: ['Street Food'] }],
+      ];
+      for (const [name, tenant, extra] of restaurants) await service.create(tenant, place(name, extra), NOW);
+    });
+
+    describe('the examples of the brief', () => {
+      it('"Best restaurants in Gurgaon with South Indian Food"', async () => {
+        const response = await service.search('tenant-a', request({ q: 'Best restaurants in Gurgaon with South Indian Food' }));
+
+        expect(namesOf(response)).toEqual(['Naivedhyam', 'Chennai Express']);
+        expect(response.meta).toMatchObject({ sort: 'rating', order: 'desc' });
+        expect(response.interpretation).toEqual({
+          q: 'Best restaurants in Gurgaon with South Indian Food',
+          summary: 'South Indian restaurants in Gurgaon, best rated first',
+          filters: { sort: 'rating', city: 'Gurgaon', cuisine: ['South Indian'] },
+          words: [],
+          overridden: [],
+          notes: [],
+        });
+      });
+
+      it('"Restaurants in Gurgaon under Rs. 1000 for two"', async () => {
+        const response = await service.search('tenant-a', request({ q: 'Restaurants in Gurgaon under Rs. 1000 for two' }));
+
+        // Spice Route costs 1500 for two.
+        expect(namesOf(response)).toEqual(['Naivedhyam', 'Goli Vada Pav No. 1', 'Chennai Express']);
+        expect(response.interpretation).toMatchObject({
+          summary: 'Restaurants in Gurgaon, average cost for two at most 999 INR, best rated first',
+          filters: { city: 'Gurgaon', maxCost: 999, currency: 'INR' },
+          notes: [],
+        });
+      });
+
+      it('"Nearest place that serves Vada Pav", given where you are', async () => {
+        const response = await service.search('tenant-a', request({ q: 'Nearest place that serves Vada Pav', ...here }));
+
+        expect(namesOf(response)).toEqual(['Goli Vada Pav No. 1', 'Just Vada Pav']);
+        expect(response.data.map((item) => item.distanceKm)).toEqual([0.96, 17.68]);
+        expect(response.meta).toMatchObject({ sort: 'distance', order: 'asc' });
+        expect(response.interpretation).toMatchObject({
+          summary: 'Restaurants with "vada pav" in the name or area, nearest first',
+          filters: { sort: 'distance' },
+          words: ['vada', 'pav'],
+          overridden: [],
+        });
+        expect(response.interpretation.notes).toEqual([
+          '"vada", "pav" are not a city, country, cuisine or filter, so each word must appear in a restaurant\'s name or area. The data has no menu items to search.',
+        ]);
+      });
+
+      it('"Nearest place that serves Vada Pav", not knowing where you are: the best first, and it says why', async () => {
+        const response = await service.search('tenant-a', request({ q: 'Nearest place that serves Vada Pav' }));
+
+        expect(namesOf(response)).toEqual(['Just Vada Pav', 'Goli Vada Pav No. 1']);
+        expect(response.meta).toMatchObject({ sort: 'rating', order: 'desc' });
+        expect(response.data[0]).not.toHaveProperty('distanceKm');
+        expect(response.interpretation.notes).toContain(
+          'The text asks for something near you, but the request has no lat and lng, so distance was not used.',
+        );
+      });
+    });
+
+    describe('"near me"', () => {
+      it('is within 5 km of the point, nearest first, and the answer says so', async () => {
+        const response = await service.search('tenant-a', request({ q: 'restaurants near me', ...here }));
+
+        // Spice Route is 5.01 km away; Just Vada Pav and Pune Place are further.
+        expect(namesOf(response)).toEqual(['Naivedhyam', 'Goli Vada Pav No. 1', 'Chennai Express']);
+        expect(response.meta).toMatchObject({ sort: 'distance', order: 'asc' });
+        expect(response.interpretation).toMatchObject({
+          summary: 'Restaurants, within 5 km, nearest first',
+          filters: { radiusKm: 5 },
+          notes: ['"near me" was read as within 5 km.'],
+        });
+      });
+
+      it('with a word for the order means the best of those within 5 km, not the best anywhere', async () => {
+        const response = await service.search('tenant-a', request({ q: 'top 2 restaurants near me', ...here }));
+
+        // Just Vada Pav (4.6 from 3000 votes) is the best in the data, but 17.68 km away.
+        expect(namesOf(response)).toEqual(['Naivedhyam', 'Goli Vada Pav No. 1']);
+        expect(response.data.map((item) => item.distanceKm)).toEqual([0, 0.96]);
+        expect(response.meta).toMatchObject({ sort: 'rating', order: 'desc' });
+      });
+
+      it('gives way to a distance, in the sentence or in the request', async () => {
+        const inSentence = await service.search('tenant-a', request({ q: 'restaurants within 2 km near me', ...here }));
+        expect(namesOf(inSentence)).toEqual(['Naivedhyam', 'Goli Vada Pav No. 1', 'Chennai Express']);
+        expect(inSentence.interpretation.filters).toEqual({ radiusKm: 2 });
+        expect(inSentence.interpretation.notes).toEqual([]);
+
+        const inRequest = await service.search('tenant-a', request({ q: 'restaurants near me', radiusKm: '0.5', ...here }));
+        expect(namesOf(inRequest)).toEqual(['Naivedhyam']);
+        expect(inRequest.interpretation.overridden).toEqual(['radiusKm']);
+        expect(inRequest.interpretation.notes).toEqual(["The request also sent radiusKm, so that was used instead of the text's."]);
+      });
+
+      it('is nothing at all without a point, which the answer says, and the restaurants come best first', async () => {
+        const response = await service.search('tenant-a', request({ q: 'restaurants near me' }));
+
+        expect(response.data).toHaveLength(6);
+        expect(response.meta).toMatchObject({ sort: 'rating', order: 'desc' });
+        expect(response.interpretation.filters).toEqual({});
+        expect(response.interpretation.notes).toEqual([
+          'The text asks for something near you, but the request has no lat and lng, so distance was not used.',
+        ]);
+      });
+    });
+
+    describe('what the sentence is turned into', () => {
+      it.each([
+        'Best restaurants in Gurgaon with South Indian Food',
+        'Restaurants in Gurgaon under Rs. 1000 for two',
+        'cheap street food in Delhi',
+        'top 2 restaurants in Gurugram',
+      ])('is exactly the parameters it reports: "%s" returns what the list returns for them', async (q) => {
+        const searched = await service.search('tenant-a', request({ q }));
+        const listed = await service.list('tenant-a', listQuerySchema.parse(asQuery(searched.interpretation.filters)));
+
+        expect(namesOf(searched)).toEqual(namesOf(listed));
+        expect(searched.page).toEqual(listed.page);
+        expect(searched.meta).toMatchObject({ sort: listed.meta.sort, order: listed.meta.order });
+      });
+
+      it.each(['top 2 restaurants near me', 'cheap restaurants within 3 km', 'nearest restaurants'])(
+        'is exactly the parameters it reports, with a point too: "%s"',
+        async (q) => {
+          const searched = await service.search('tenant-a', request({ q, ...here }));
+          const listed = await service.list(
+            'tenant-a',
+            listQuerySchema.parse({ ...asQuery(searched.interpretation.filters), ...here }),
+          );
+
+          expect(namesOf(searched)).toEqual(namesOf(listed));
+          expect(searched.page).toEqual(listed.page);
+          expect(searched.meta).toMatchObject({ sort: listed.meta.sort, order: listed.meta.order });
+        },
+      );
+
+      it('looks for a single digit too: "dlf phase 3" is not "dlf phase 2"', async () => {
+        await service.create('tenant-a', place('Phase Two Cafe', where('Gurgaon', 'DLF Phase 2')), NOW);
+
+        expect(namesOf(await service.search('tenant-a', request({ q: 'dlf phase 3' })))).toEqual(['Goli Vada Pav No. 1']);
+        expect(namesOf(await service.search('tenant-a', request({ q: 'dlf phase 2' })))).toEqual(['Phase Two Cafe']);
+      });
+
+      it('finds a word in the locality as well as in the name', async () => {
+        const response = await service.search('tenant-a', request({ q: 'dlf phase 3' }));
+
+        expect(namesOf(response)).toEqual(['Goli Vada Pav No. 1']);
+      });
+
+      it('counts like the list: "top 2" is a page of two, with another page after it', async () => {
+        const response = await service.search('tenant-a', request({ q: 'top 2 restaurants' }));
+
+        expect(response.data).toHaveLength(2);
+        expect(response.page).toEqual({ limit: 2, offset: 0, hasMore: true });
+      });
+
+      it('knows a city created a moment ago', async () => {
+        await service.create('tenant-a', place('Kolkata Kitchen', where('Kolkata')), NOW);
+
+        const response = await service.search('tenant-a', request({ q: 'restaurants in Calcutta' }));
+
+        expect(namesOf(response)).toEqual(['Kolkata Kitchen']);
+      });
+    });
+
+    describe('together with parameters', () => {
+      it('lets a parameter win over the sentence, and says so', async () => {
+        const response = await service.search('tenant-a', request({ q: 'restaurants in Gurgaon', city: 'Pune' }));
+
+        expect(namesOf(response)).toEqual(['Pune Place']);
+        expect(response.interpretation.overridden).toEqual(['city']);
+        expect(response.interpretation.filters).toEqual({});
+      });
+
+      it('applies the name filter together with the words of the sentence', async () => {
+        const response = await service.search('tenant-a', request({ q: 'dlf', name: 'goli' }));
+
+        expect(namesOf(response)).toEqual(['Goli Vada Pav No. 1']);
+        expect((await service.search('tenant-a', request({ q: 'dlf', name: 'just' }))).data).toEqual([]);
+      });
+
+      it('works without a sentence, as the list does', async () => {
+        const searched = await service.search('tenant-a', request({ city: 'Gurgaon', maxCost: '500' }));
+        const listed = await service.list('tenant-a', listQuerySchema.parse({ city: 'Gurgaon', maxCost: '500' }));
+
+        expect(namesOf(searched)).toEqual(namesOf(listed));
+        expect(searched.interpretation).toEqual({
+          q: null,
+          summary: 'Restaurants in Gurgaon, average cost for two at most 500, best rated first',
+          filters: {},
+          words: [],
+          overridden: [],
+          notes: [],
+        });
+      });
+
+      it('answers 400 when the request contradicts its sentence', async () => {
+        const problem = await problemOf(service.search('tenant-a', request({ q: 'nearest pizza', order: 'desc', ...here })));
+
+        expect(problem).toMatchObject({
+          status: 400,
+          errors: [{ parameter: 'order', detail: 'distance can only be sorted nearest first' }],
+        });
+      });
+    });
+
+    describe('when nothing matches', () => {
+      it('says that no restaurant has all of the words', async () => {
+        const response = await service.search('tenant-a', request({ q: 'zzzz qqqq' }));
+
+        expect(response.data).toEqual([]);
+        expect(response.interpretation.notes).toContain('No restaurant has all of these words in its name or area. Fewer words will match more.');
+      });
+
+      it('does not say that about a page past the end of results that exist', async () => {
+        const response = await service.search('tenant-a', request({ q: 'vada pav', offset: '10' }));
+
+        expect(response.data).toEqual([]);
+        expect(response.interpretation.notes.join(' ')).not.toContain('No restaurant has all');
+      });
+
+      it('does not talk about words when the filters matched nothing and there were no words', async () => {
+        const response = await service.search('tenant-a', request({ q: 'South Indian restaurants in Pune' }));
+
+        expect(response.data).toEqual([]);
+        expect(response.interpretation.words).toEqual([]);
+        expect(response.interpretation.notes.join(' ')).not.toContain('No restaurant has all');
+      });
+
+      it('lists everything, and says so, when nothing in the text is recognised', async () => {
+        const response = await service.search('tenant-a', request({ q: 'restaurants' }));
+
+        expect(response.data).toHaveLength(6);
+        expect(response.interpretation.notes).toEqual([
+          'Nothing in the text was recognised as a place, cuisine or filter, so no filter was applied.',
+        ]);
+      });
+    });
+
+    describe('isolation and failure', () => {
+      it("searches only the asking tenant's restaurants", async () => {
+        expect(namesOf(await service.search('tenant-b', request({ q: 'vada pav' })))).toEqual(['Their Vada Pav']);
+        expect(namesOf(await service.search('tenant-a', request({ q: 'vada pav' })))).not.toContain('Their Vada Pav');
+        expect((await service.search('tenant-c', request({ q: 'vada pav' }))).data).toEqual([]);
+      });
+
+      it('does not hide a failure of the store behind an empty page', async () => {
+        jest.spyOn(store, 'list').mockRejectedValue(new Error('connection reset'));
+
+        await expect(service.search('tenant-a', request({ q: 'pizza' }))).rejects.toThrow('connection reset');
+      });
     });
   });
 });

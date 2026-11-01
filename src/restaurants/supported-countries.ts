@@ -41,6 +41,15 @@ const BY_NAME: ReadonlyMap<string, string> = new Map(
 );
 
 /**
+ * What a sentence may call each country: the names and the nicknames, in lower
+ * case, never the two-letter codes ("in" and "us" are ordinary words in a
+ * sentence). The search reads "restaurants in India" with it.
+ */
+export function countryPhrases(): Array<{ phrase: string; code: string }> {
+  return [...BY_NAME, ...COUNTRY_NICKNAMES].map(([phrase, code]) => ({ phrase, code }));
+}
+
+/**
  * The country for what a person types: an ISO code ("in"), a name ("India")
  * or a common nickname ("UK"), in any letter case. Undefined when it is none of them.
  */

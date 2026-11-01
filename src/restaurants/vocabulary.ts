@@ -39,6 +39,14 @@ const CITY_ALIAS_GROUPS: ReadonlyArray<readonly string[]> = [
   ['Vadodara', 'Baroda'],
 ];
 
+/** A way to write a name, and the name the data uses for it. */
+export interface VocabularyPhrase {
+  /** As a person writes it, in lower case: "gurugram". */
+  phrase: string;
+  /** As the data spells it: "Gurgaon". */
+  name: string;
+}
+
 /** The form in which two spellings are compared: tidy whitespace, lower case. */
 const keyOf = (text: string): string => collapseWhitespace(text).toLowerCase();
 
@@ -74,5 +82,29 @@ export class Vocabulary {
   /** The cuisine as the data spells it: any letter case. */
   canonicalCuisine(input: string): string {
     return this.cuisineByKey.get(keyOf(input)) ?? collapseWhitespace(input);
+  }
+
+  /**
+   * Every way to write a city that `canonicalCity` understands: the cities of
+   * the data and the aliases of those cities. What the search looks for in a sentence.
+   */
+  cityPhrases(): VocabularyPhrase[] {
+    const phrases: VocabularyPhrase[] = this.data.cities.map(({ name }) => ({
+      phrase: keyOf(name),
+      name,
+    }));
+    for (const group of CITY_ALIAS_GROUPS) {
+      const known = group.map((name) => this.cityByKey.get(keyOf(name))).find((name) => name);
+      if (!known) continue;
+      for (const alias of group) {
+        if (!this.cityByKey.has(keyOf(alias))) phrases.push({ phrase: keyOf(alias), name: known });
+      }
+    }
+    return phrases;
+  }
+
+  /** The cuisines of the data, as a person writes them. */
+  cuisinePhrases(): VocabularyPhrase[] {
+    return this.data.cuisines.map(({ name }) => ({ phrase: keyOf(name), name }));
   }
 }

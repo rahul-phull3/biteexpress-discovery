@@ -16,6 +16,7 @@ commands work the same in any shell.
 | Create a restaurant (section 3.14) | `curl.exe -i -H "Content-Type: application/json" --data-binary "@docs/examples/create-restaurant.json" http://localhost:3000/v1/restaurants` |
 | Fetch it by the id that came back | `curl.exe -i http://localhost:3000/v1/restaurants/<id>` |
 | List and filter restaurants (section 3.15) | `curl.exe -s "http://localhost:3000/v1/restaurants?city=Gurgaon&limit=5"` |
+| Search with a sentence (section 3.16) | `curl.exe -s "http://localhost:3000/v1/restaurants/search?q=Best%20restaurants%20in%20Gurgaon%20with%20South%20Indian%20Food"` |
 | See what the API created in MongoDB | `npm run db:inspect` |
 | Open a MongoDB shell | `npm run db:shell` |
 | Watch the database refuse bad data | `npm run db:validator-demo` |
@@ -245,9 +246,9 @@ and acceptance for a valid restaurant and for one with an extra field.
 
 | Command | Needs | What it proves |
 | --- | --- | --- |
-| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator. For the restaurant API: the request schemas, the error format, the service, the listing rules (query parameters, the MongoDB query builder, the lists of cities and cuisines), and the contract checks run on the in-memory store |
-| `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes; creating, fetching and listing restaurants, and the error answer of every refusal |
-| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice. For the restaurant API: the contract checks again on the MongoDB store, the listing queries on 60 real documents (no `COLLSCAN`, the geo index used, distances right), and create, fetch and list over HTTP on a real database |
+| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator. For the restaurant API: the request schemas, the error format, the service, the listing rules (query parameters, the MongoDB query builder, the lists of cities and cuisines), the reader of search sentences (about 180 tests on phrases alone) and its merge with the parameters, and the contract checks run on the in-memory store |
+| `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes; creating, fetching, listing and searching restaurants (the three questions of the brief, a sentence together with parameters, the headers), and the error answer of every refusal |
+| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice. For the restaurant API: the contract checks again on the MongoDB store, the listing queries on 60 real documents (no `COLLSCAN`, the geo index used, distances right), the plans of the searches with words, the three questions of the brief answered from real data, and create, fetch, list and search over HTTP on a real database |
 | `npm run check` | nothing | Lint, type-check, `npm test` and `npm run test:e2e`, stopping at the first failure |
 
 `npm run test:int` creates a throwaway database named `biteexpress_it_<random>`
@@ -787,8 +788,9 @@ db.restaurants.countDocuments({ tenantId: "biteexpress", "address.city": "Gurgao
 npm run db:explain
 ```
 
-It asks MongoDB how it would run fifteen queries: ten typical listings, three
-"near me" searches and the two that read the lists of cities and cuisines. It
+It asks MongoDB how it would run eighteen queries: twelve typical listings (two
+of them with the words of a search sentence), four "near me" searches (one of
+them with words) and the two that read the lists of cities and cuisines. It
 prints one entry for each. Look for `PASS` on every entry and `Result: PASS` at
 the end. This is the layout (the plan names are what matter; the keys read,
 documents read and milliseconds depend on your data and machine):
@@ -815,6 +817,224 @@ This check says nothing about how the plans behave with millions of restaurants;
 that needs its own measurement. One shape is expected to sort in memory: a city
 plus a cuisine reads that city's matching restaurants and sorts them, which at
 9,551 restaurants is a few dozen rows.
+
+### 3.16 Search restaurants with a sentence
+
+`GET /v1/restaurants/search` does everything the list does (section 3.15: the
+same parameters, the same page, the same order rules, the same refusals) and
+also takes a sentence in `q`. These are the three examples of the brief:
+
+- "Best restaurants in Gurgaon with South Indian Food"
+- "Restaurants in Gurgaon under Rs. 1000 for two"
+- "Nearest place that serves Vada Pav"
+
+The sentence is read by fixed rules, not by a language model (section 8 says
+why), and every answer says how it was read, so nothing is guessed in silence.
+
+Start the API and load the restaurants first (`npm run import`). This helper
+sends a sentence, prints how it was read, then the restaurants; define it once
+per PowerShell window:
+
+```powershell
+$search = "http://localhost:3000/v1/restaurants/search"
+$cyberHub = "&lat=28.495&lng=77.089"
+function Search-Restaurants($sentence, $point = "") {
+  $answer = curl.exe -s ("${search}?q=" + [uri]::EscapeDataString($sentence) + $point) | ConvertFrom-Json
+  if (-not $answer.interpretation) { $answer | ConvertTo-Json -Depth 5; return }   # a refusal: show it as it is
+  "Read as: " + $answer.interpretation.summary
+  $answer.interpretation.notes | ForEach-Object { "Note:    " + $_ }
+  $answer.data | Format-Table name, locality, city, averageRating, votes, costForTwo, currency, distanceKm -AutoSize
+}
+```
+
+(Accented letters need the `[Console]::OutputEncoding` line from section 3.15.
+To see the headers, or the status of a refusal, use `curl.exe -i` as below.)
+
+Some questions to ask. The comments say how many restaurants match in the
+500-row sample and in the full dataset (all matches, not just the first page):
+
+```powershell
+Search-Restaurants "Best restaurants in Gurgaon with South Indian Food"     # 1 in the sample, 70 in the full dataset
+Search-Restaurants "Restaurants in Gurgaon under Rs. 1000 for two"          # 35 in the sample, 893 in the full dataset
+Search-Restaurants "Nearest place that serves Vada Pav" $cyberHub           # none in the sample; 16 in the full dataset, the nearest 0.47 km away
+Search-Restaurants "Nearest place that serves Vada Pav"                     # no location: best rated first and a note says why (18 in the full dataset)
+Search-Restaurants "top 5 italian places near me" $cyberHub                 # the 5 best rated Italian restaurants within 5 km
+Search-Restaurants "pizza rated above 4 within 3 km" $cyberHub              # none in the sample; 2 in the full dataset
+Search-Restaurants "restaurants in Dubai under 150 dirhams"                 # 1 in the sample, 5 in the full dataset
+Search-Restaurants "cheap street food nearby" $cyberHub                     # cheapest first within 5 km: none in the sample, 35 in the full dataset
+```
+
+With the full dataset, "Nearest place that serves Vada Pav" from Cyber Hub gives
+these first three (the sample has no restaurant with those words in its name):
+
+```text
+Goli Vada Pav No. 1     DLF Phase 3                                   0.47 km
+Goli Vada Pav No. 1     Vyapar Kendra, Sushant Lok                    3.94 km
+WoW - Vada Pav & More   Sushant Shopping Arcade, Sushant Lok, Gurgaon 3.96 km
+```
+
+The raw answer, for the second question with two restaurants (the `id` will differ):
+
+```powershell
+curl.exe -i "${search}?q=Restaurants%20in%20Gurgaon%20under%20Rs.%201000%20for%20two&limit=2"
+```
+
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, max-age=15
+Vary: X-Tenant-Id
+X-Request-Id: 8c0e2f6a-1d93-4b7e-a5c4-6f2d9e8b1a37
+Content-Type: application/json; charset=utf-8
+
+{
+  "data": [
+    {
+      "id": "65a1b2c3d4e5f60718293a4b",
+      "name": "Crudo Juicery",
+      "address": "DLF Phase 3, Gurgaon",
+      "locality": "DLF Phase 3",
+      "city": "Gurgaon",
+      "country": "India",
+      "countryCode": "IN",
+      "cuisines": ["Beverages", "Salad"],
+      "averageRating": 4.3,
+      "votes": 33,
+      "costForTwo": 400,
+      "currency": "INR"
+    },
+    { "...": "the second restaurant, same fields" }
+  ],
+  "page": { "limit": 2, "offset": 0, "hasMore": true },
+  "meta": { "sort": "rating", "order": "desc", "tookMs": 3 },
+  "interpretation": {
+    "q": "Restaurants in Gurgaon under Rs. 1000 for two",
+    "summary": "Restaurants in Gurgaon, average cost for two at most 999 INR, best rated first",
+    "filters": { "city": "Gurgaon", "maxCost": 999, "currency": "INR" },
+    "words": [],
+    "overridden": [],
+    "notes": []
+  }
+}
+```
+
+How to read it:
+
+- `data`, `page` and `meta` are exactly what the list returns (section 3.15).
+- `interpretation.summary` is the whole search in one line, written from the
+  query that ran, so it cannot disagree with it.
+- `interpretation.filters` is what the sentence was turned into, in the names of
+  the list's parameters. Send them to `GET /v1/restaurants` and you get the same
+  restaurants; a test checks that.
+- `interpretation.words` are the words of the sentence that are not a place,
+  cuisine or filter. Each one must appear in the restaurant's name or area (below).
+- `interpretation.overridden` lists the parameters you sent yourself that took the
+  place of something in the sentence.
+- `interpretation.notes` are the assumptions, and what could not be answered.
+  The third question, from Cyber Hub, says this:
+
+```json
+"interpretation": {
+  "q": "Nearest place that serves Vada Pav",
+  "summary": "Restaurants with \"vada pav\" in the name or area, nearest first",
+  "filters": { "sort": "distance" },
+  "words": ["vada", "pav"],
+  "overridden": [],
+  "notes": [
+    "\"vada\", \"pav\" are not a city, country, cuisine or filter, so each word must appear in a restaurant's name or area. The data has no menu items to search."
+  ]
+}
+```
+
+**What a sentence can say**
+
+| You write | It means | Notes |
+| --- | --- | --- |
+| a city of the data: "Gurgaon", "Gurugram", "Delhi" | `city` | Other names of a city are understood as in the list. Delhi is New Delhi |
+| a country: "India", "UK", "USA", "UAE" | `country` | Names and nicknames, never the two-letter codes: "in" and "us" are ordinary words |
+| a cuisine of the data: "South Indian", "pizza", "street food" | `cuisine` | Whole names. "Indian" is the cuisine Indian, not North Indian |
+| "under / below / less than Rs. 1000" | `maxCost=999` | Under means below, so 1000 itself is out |
+| "up to / within / at most / budget Rs. 1000" | `maxCost=1000` | |
+| "over / above Rs. 500", "at least / from Rs. 500" | `minCost=501`, `minCost=500` | |
+| "between 500 and 1500", "Rs 500-1500", "under 1.5k" | `minCost` and `maxCost` | `k` and thousands separators are read |
+| "per person" | the amount is doubled | The data prices a meal for two; a note says so |
+| "Rs", "₹", "rupees", "$", "dirhams", "AED" and other codes | `currency` | With no currency, costs are compared in each restaurant's own, and a note says so |
+| "rated above 4", "4 stars", "4+ rated" | `minRating` | 0 to 5 |
+| "within 3 km", "2 miles", "500 m" | `radiusKm` | At most 50. Needs `lat` and `lng` |
+| "near me", "nearby", "close by" | `radiusKm=5` | Needs `lat` and `lng`; a note says that 5 km was assumed |
+| "nearest", "closest" | `sort=distance` | Needs `lat` and `lng`; the nearest wherever it is, with no radius |
+| "best", "top", "top rated" | `sort=rating` | |
+| "cheapest", "cheap", "affordable" | `sort=cost`, lowest first | |
+| "most expensive" | `sort=cost`, highest first | |
+| "popular", "most reviewed" | `sort=votes` | |
+| "top 5", "3 nearest", "10 restaurants" | `limit` | At most 50 |
+| "with online delivery", "without table booking" | `delivery`, `booking` | |
+| "open now", "late night", "24/7" | ignored | Opening hours are not in the data; a note says so |
+| anything else | `words` | Up to 6, each must appear in the name or the area |
+
+If two phrases ask for different orders ("cheapest best pizza") the first one is
+used and a note names the other.
+
+**Words that are not a place or a filter.** The data has cuisines but no menu, so
+"vada pav" cannot be found as a dish. What the API does instead is look for each
+word in the restaurant's name and in its area (`locality`), ignoring case, as
+plain text, and requires all of them. "vada pav" finds Goli Vada Pav No. 1 and
+Vada Pav Junction; it does not find a snack bar that sells vada pav under another
+name, and it does not find a restaurant that has only "pav". When nothing
+matches, the answer is `200` with an empty page and a note, not `404`. The note
+says that fewer words will match more.
+
+**A sentence together with parameters.** All the parameters of section 3.15 work
+here, with or without a sentence:
+
+- A parameter you send wins over the sentence, one by one. `q=pizza in Delhi`
+  with `city=Pune` is pizza in Pune; `overridden` says `["city"]` and a note
+  says so.
+- A price is one idea: `minCost` or `maxCost` in the request replaces the whole
+  price in the sentence, currency included. `sort` replaces the sentence's order
+  and its direction together. `name` replaces nothing: it and the words of the
+  sentence both apply.
+- A sentence cannot say where you are, so `lat` and `lng` are always parameters.
+  Without them, "nearest", "near me" and "within 3 km" are left out and a note
+  says that distance was not used. The restaurants come back best rated first.
+- `limit` works as in the list: "top 2" is a page of two, with `hasMore` and
+  `offset` for the next; `limit` in the request wins.
+- A request that contradicts its own sentence is a `400` that names the parameter:
+  `order=desc` with "nearest" cannot be done.
+- Without `q`, the endpoint is the list, and `interpretation.q` is `null`.
+
+**What the API refuses.** The same problem format as everywhere:
+
+| Request (after `$search`) | Answer | What it shows |
+| --- | --- | --- |
+| `?q=` | `400`, `parameter` = `q`, `must not be empty` | An empty sentence is not "everything" |
+| `?q=pizza&q=pasta` | `400`, `parameter` = `q` | One sentence at a time |
+| `?q=` and 201 characters | `400`, `must be at most 200 characters` | A sentence is read up to 200 characters |
+| `?qq=pizza` | `400`, `Unknown parameter "qq". Remove it.` | A typo is reported, as in the list |
+| `?q=pizza&radiusKm=3` | `400`, `parameter` = `radiusKm`, `needs lat and lng` | A radius of your own needs a point |
+| `?q=nearest%20pizza&lat=28.5&lng=77.1&order=desc` | `400`, `parameter` = `order` | The request contradicts its sentence |
+| `?q=xyzzy` | `200`, `"data": []`, and a note | A question with no answers is not an error |
+
+**What it does not do.** It is a reader of phrases, and it says when it did not
+understand: the words it cannot place are searched in names and areas, which finds
+little. It does not know synonyms ("veg" is not "Vegetarian"), moods ("romantic"),
+dishes ("dosa" is searched in names, not menus), opening hours, or a rating
+upper limit ("rated below 3"). A word that is also the name of a city in the data
+is read as the city. Section 9 lists what a later step could add.
+
+**Check the answers against MongoDB itself**
+
+```powershell
+npm run db:shell
+# then, inside mongosh:
+db.restaurants.countDocuments({ tenantId: "biteexpress", status: "active", $and: [
+  { $or: [{ name: /vada/i }, { "address.locality": /vada/i }] },
+  { $or: [{ name: /pav/i }, { "address.locality": /pav/i }] } ] })
+# 0 with the sample, 18 with the full dataset (16 of them have coordinates)
+```
+
+That is the query the API builds for "vada pav": one `$or` for each word, joined
+by `$and`. `npm run db:explain` shows the plans of the searches with words (section
+3.15).
 
 ## 4. What happens when the API starts
 
@@ -850,8 +1070,9 @@ Every check has a 2 second limit, so the endpoint cannot hang.
 | `search.status` | `READY`; `PENDING` or `BUILDING` while it is being built; `FAILED` if the definition was rejected; `MISSING` if no such search index exists; `UNAVAILABLE` if the deployment has no search process or the call failed (see `error`); `UNKNOWN` if MongoDB was down so it was not checked |
 | `search.queryable` | `true` once the search index can answer queries |
 
-The search index is reported but never makes the endpoint fail: without it,
-search falls back to the rule-based path (arrives with the search step).
+The search index is reported but never makes the endpoint fail. `GET
+/v1/restaurants/search` does not query it yet: it reads the sentence by rule and
+uses the ordinary indexes, so it works on any MongoDB (section 3.16).
 
 ## 6. Troubleshooting
 
@@ -909,9 +1130,9 @@ lines of `npm run db:logs`, and the full API error.
 | `data/` | The 500-row sample and `text-fixes.json`; `full/` is for the unzipped archive and is ignored by Git. `data/README.md` explains each file |
 | `scripts/mongosh/` | The scripts behind `npm run db:inspect`, `npm run db:validator-demo` and `npm run db:explain` |
 | `src/http/` | Everything shared by the HTTP layer. `problem.ts` decides how every failure is reported (RFC 9457), `problem-details.filter.ts` writes it, `request-context.ts` gives each request an id and an access-log line, `zod-validation.pipe.ts` turns Zod errors into field errors, `tenant.ts` reads the tenant header, `api-prefix.ts` holds `v1` |
-| `src/restaurants/` | The restaurant resource. `create-restaurant.schema.ts` is the request contract, `build-restaurant.ts` turns a request into the stored document, `restaurant.resource.ts` turns a stored document into the answer, `restaurants.service.ts` holds the use cases, `restaurant.store.ts` is the storage port and `mongo-restaurant.store.ts` its MongoDB adapter, `restaurants.controller.ts` is the HTTP glue. For the listing: `list-query.schema.ts` is the contract of the query string, `list-criteria.ts` turns it into what the store is asked, `mongo-list-query.ts` builds the MongoDB query (pure, so it is unit-tested without a database), `restaurant.list-item.ts` shapes each answer, and `vocabulary*.ts` knows the tenant's cities and cuisines, and the other names of a city |
+| `src/restaurants/` | The restaurant resource. `create-restaurant.schema.ts` is the request contract, `build-restaurant.ts` turns a request into the stored document, `restaurant.resource.ts` turns a stored document into the answer, `restaurants.service.ts` holds the use cases, `restaurant.store.ts` is the storage port and `mongo-restaurant.store.ts` its MongoDB adapter, `restaurants.controller.ts` is the HTTP glue. For the listing: `list-query.schema.ts` is the contract of the query string, `list-criteria.ts` turns it into what the store is asked, `mongo-list-query.ts` builds the MongoDB query (pure, so it is unit-tested without a database), `restaurant.list-item.ts` shapes each answer, and `vocabulary*.ts` knows the tenant's cities and cuisines, and the other names of a city. For the search: `search-text.ts` reads a sentence into list parameters (pure, one rule per kind of phrase), `search-query.ts` merges them with the request's own parameters and writes the one-line summary, and `restaurant.search-response.ts` is the shape of the answer |
 | `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, the per-run test-database setup, `InMemoryRestaurantStore`, `in-memory-listing.ts` (its independently written filtering and ordering) and `restaurant-store.contract.ts` (the checks both stores must pass) |
-| `test/restaurants.e2e-spec.ts`, `test/restaurants.int-spec.ts` | Create, fetch and list through the whole HTTP stack with no database, and against a real MongoDB |
+| `test/restaurants.e2e-spec.ts`, `test/search.e2e-spec.ts`, `test/restaurants.int-spec.ts` | Create, fetch, list and search through the whole HTTP stack with no database (the first two), and against a real MongoDB (the last) |
 | `test/mongo.int-spec.ts` | Integration tests against a real MongoDB |
 | `test/importer.int-spec.ts` | Integration tests for the importer against a real MongoDB |
 | `test/support/zomato-rows.ts`, `test/support/json-schema-lite.ts` | A builder for CSV rows, and a small checker that says whether the collection validator would accept a document, so `npm test` can prove it without a database |
@@ -922,7 +1143,7 @@ lines of `npm run db:logs`, and the full API error.
   touches MongoDB, so a database outage cannot make an orchestrator restart a
   healthy process in a loop. `/ready` answers "can it serve traffic?" and returns
   503 with reasons. Search status is reported but does not fail readiness,
-  because search degrades to the rule-based path.
+  because the search endpoint works without the Atlas Search index.
 - **Fail fast at startup.** The app connects and prepares the schema before it
   listens. A wrong address stops the process with a clear message and a non-zero
   exit code, which Docker and CI notice, instead of failing the first user request.
@@ -1070,7 +1291,7 @@ lines of `npm run db:logs`, and the full API error.
 - **Cities and cuisines are learned from the data.** Two aggregations list the
   tenant's cities and cuisines with counts, cached for 60 seconds and reset when a
   restaurant is created. This is how `city=gurugram` becomes `Gurgaon` and how the
-  search step will recognise "South Indian" inside a sentence. The few well-known
+  search recognises "South Indian" inside a sentence. The few well-known
   alternative city names are a short built-in table that applies only when the data
   actually has one of the names. Trade-off: a cache to keep right; the alternative
   is a hard-coded list that goes stale.
@@ -1087,9 +1308,76 @@ lines of `npm run db:logs`, and the full API error.
   test ask MongoDB for the plan of each listing query and fail on a collection
   scan. A new filter that silently stops using its index becomes a failing test.
 
+- **A sentence is read by rules, and the reading is shown.** `parseSearchText` is
+  a pure function: a sentence and the tenant's cities and cuisines in, list
+  parameters out, with no database, clock or network. Every kind of phrase (a
+  price, a rating, a distance, a count, a word for the order, a service) is one
+  rule that cuts its words out of the sentence; what is left is looked up in the
+  data's own names. Why not a language model: the same sentence always gives the
+  same answer, each rule is tested word by word, there is no latency, cost, key or
+  data leaving the system, and it runs offline in Docker Compose. Trade-off: it
+  understands the phrases it has rules for, not everything a person could say, and
+  it does not know synonyms. Because the reader is one function with a fixed
+  output, a model could replace it later without changing the endpoint, the merge
+  or the queries.
+- **The search is the list.** The sentence becomes the list's parameters and the
+  same store query runs; the answer is the list's answer plus `interpretation`.
+  So "can do everything the above endpoint does" holds by construction, filters,
+  order, paging and the index plans are the ones already tested and explained, a
+  sentence can never ask for something the parameters cannot, and a test checks
+  that a search returns what the list returns for `interpretation.filters`.
+- **Say what was assumed.** Each guess becomes a note in the answer: the cost is
+  for two, so "per person" was doubled; no currency was named; "near me" was
+  read as 5 km; opening hours are not in the data. The alternative, a silent
+  best guess, looks right and cannot be checked.
+- **A parameter beats the sentence, field by field.** A sentence is a convenience;
+  a parameter is an instruction. A price (min, max and currency) and a sort (with
+  its direction) are each one idea, so they are replaced together. `overridden`
+  and a note say what was replaced. A request that contradicts its own sentence
+  (`order=desc` with "nearest") is a 400 that names the parameter.
+- **A sentence cannot say where you are.** `lat` and `lng` are parameters. Without
+  them "nearest", "near me" and "within 3 km" are left out with a note, and the
+  restaurants come back best rated first, rather than a refusal: a search box
+  should answer.
+- **"Near me" is 5 km; "nearest" has no limit.** Without a radius, "top 5 italian
+  places near me" was the five best rated Italian restaurants anywhere, thousands
+  of kilometres away. "Nearest" asks for the closest one, wherever it is, so it
+  gets no radius. An explicit distance, in the sentence or in `radiusKm`, wins.
+- **Words that are not a place or a filter are looked for in the name and the
+  area, all of them.** The data has cuisines but no menu items, so "vada pav"
+  cannot be found as a dish; the honest equivalent is names and areas, and the
+  answer says so in a note. Each word is a case-insensitive literal substring
+  (escaped, so a dot is a dot), and every word must be there, because "vada pav"
+  must not return every restaurant with "pav". At most six words, and a sentence
+  of at most 200 characters, bound the query. Trade-off: an unanchored match
+  cannot use an index; the tenant prefix narrows the scan, which is fine at
+  9,551 restaurants. At millions, this is what Atlas Search is for.
+- **Whole names for cuisines, nothing guessed.** "Indian" is the cuisine Indian,
+  not North Indian, and a two-letter country code is never read from a sentence
+  ("in" and "us" are words). A word that fits nothing is searched as a word and
+  reported, not mapped to the nearest thing.
+- **The search route is declared before `{id}`.** Nest registers routes in the
+  order of the methods, so `GET /v1/restaurants/search` would otherwise be a
+  lookup of the restaurant "search". A test pins it.
+- **The search has the list's cache header.** `private, max-age=15` with
+  `Vary: X-Tenant-Id`, set only after the search succeeded; refusals are `no-store`.
+
 ## 9. Not covered yet
 
-- The search endpoint with a free-text `q` (Step 7) is not built yet.
+- The search reads phrases by rule. It does not know synonyms ("veg" for
+  Vegetarian), moods ("romantic"), a rating upper limit ("rated below 3") or
+  anything about opening hours ("open now" is ignored, with a note). A word it
+  cannot place is searched in names and areas, which usually finds nothing.
+  Atlas Search (typo tolerance, relevance ranking, autocomplete) or a model-based
+  reader would be the next step; the endpoint would not change.
+- There is no menu in the data, so "vada pav" matches names and areas that contain
+  the words (18 restaurants in the full dataset, none in the sample), not
+  restaurants that sell it.
+- Words in a sentence are matched as plain substrings of the name and the area,
+  which cannot use an index. The tenant prefix narrows the scan; it would not at
+  millions of restaurants.
+- "Delhi NCR" is understood as New Delhi only; Gurgaon and Noida are cities of
+  their own in the data.
 - A listing has no total count, only `hasMore`, and an offset stops at 1,000.
   Browsing deeper needs keyset paging.
 - A point with a sort other than distance and no `radiusKm` reads every restaurant
@@ -1113,5 +1401,6 @@ lines of `npm run db:logs`, and the full API error.
   migration.
 - The local database has no authentication. That is acceptable on a laptop with
   the port bound to 127.0.0.1; it is not acceptable anywhere else.
-- The Atlas Search index definition is a baseline. The search step extends it with
-  the facets it needs.
+- The Atlas Search index definition is a baseline, and nothing queries it yet. A
+  `$search` query for typo tolerance and relevance ranking, with the rule-based
+  path as the fallback, would extend it.

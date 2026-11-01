@@ -19,6 +19,14 @@ export interface NearPoint {
 export interface ListCriteria {
   /** Part of the name, any letter case. */
   nameContains?: string;
+  /**
+   * Words from a free-text search. Each one must appear in the name or in the
+   * locality (the area), any letter case, in any order; a word may sit in the
+   * name while the next sits in the locality. Matched literally, never as a
+   * pattern. Not a request parameter: only the search sets it, so
+   * `buildListCriteria` never does.
+   */
+  textWords?: string[];
   /** Exact city name as stored. */
   city?: string;
   /** ISO 3166-1 alpha-2. */

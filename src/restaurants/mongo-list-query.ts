@@ -65,6 +65,13 @@ export function buildFilter(tenantId: string, criteria: ListCriteria): Document 
     // The text is escaped, so it is matched literally: "(bar)" or "." cannot become a pattern.
     filter.name = { $regex: escapeRegex(criteria.nameContains), $options: 'i' };
   }
+  if (criteria.textWords !== undefined && criteria.textWords.length > 0) {
+    // One clause per word, all of them required; a clause is met by the name or by the area.
+    filter.$and = criteria.textWords.map((word) => {
+      const contains = { $regex: escapeRegex(word), $options: 'i' };
+      return { $or: [{ name: contains }, { 'address.locality': contains }] };
+    });
+  }
   if (criteria.minRating !== undefined) filter['rating.average'] = { $gte: criteria.minRating };
 
   // $gte and $lte only match numbers, so an unknown cost never matches a bound.

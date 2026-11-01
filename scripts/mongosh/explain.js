@@ -17,6 +17,11 @@
   const withFilter = function (extra) {
     return Object.assign({}, active, extra);
   };
+  // One word of a search sentence: it must appear in the name or in the locality (src/restaurants/mongo-list-query.ts).
+  const wordIn = function (word) {
+    const contains = { $regex: word, $options: 'i' };
+    return { $or: [{ name: contains }, { 'address.locality': contains }] };
+  };
   const bestFirst = { 'rating.score': -1, _id: 1 };
   const cyberHub = { type: 'Point', coordinates: [77.089, 28.495] }; // longitude first
 
@@ -28,6 +33,8 @@
     ['a country, best first', withFilter({ 'address.country.code': 'IN' }), bestFirst],
     ['rated 4 or more, best first', withFilter({ 'rating.average': { $gte: 4 } }), bestFirst],
     ['a part of a name, best first', withFilter({ name: { $regex: 'vada', $options: 'i' } }), bestFirst],
+    ['search words in the name or area, best first', withFilter({ $and: [wordIn('vada'), wordIn('pav')] }), bestFirst],
+    ['search: a city and a word in the name or area, best first', withFilter({ 'address.city': 'Gurgaon', $and: [wordIn('golf')] }), bestFirst],
     ['cheapest first', withFilter({ 'cost.forTwo': { $ne: null } }), { 'cost.forTwo': 1, _id: 1 }],
     ['by name', active, { name: 1, _id: 1 }],
     ['by city, best first inside each city', active, { 'address.city': 1, 'rating.score': -1, _id: 1 }],
@@ -38,7 +45,8 @@
   };
   const aggregations = [
     ['nearest first', [geoNear({}, active), { $limit: PAGE }]],
-    ['nearest vada pav', [geoNear({}, withFilter({ name: { $regex: 'vada', $options: 'i' } })), { $limit: PAGE }]],
+    ['nearest, part of a name', [geoNear({}, withFilter({ name: { $regex: 'vada', $options: 'i' } })), { $limit: PAGE }]],
+    ['search: nearest, words in the name or area', [geoNear({}, withFilter({ $and: [wordIn('vada'), wordIn('pav')] })), { $limit: PAGE }]],
     ['within 3 km, best first', [geoNear({ maxDistance: 3000 }, active), { $sort: bestFirst }, { $limit: PAGE }]],
     ['vocabulary: cities', [{ $match: active }, { $group: { _id: '$address.city', count: { $sum: 1 } } }, { $sort: { _id: 1 } }]],
     ['vocabulary: cuisines', [{ $match: active }, { $unwind: '$cuisines' }, { $group: { _id: '$cuisines', count: { $sum: 1 } } }, { $sort: { _id: 1 } }]],

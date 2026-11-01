@@ -4,6 +4,7 @@ import {
   MAX_LIMIT,
   MAX_OFFSET,
   MAX_RADIUS_KM,
+  searchQuerySchema,
 } from './list-query.schema';
 
 type Query = Record<string, unknown>;
@@ -265,5 +266,115 @@ describe('listQuerySchema', () => {
         'minCost: must not be greater than maxCost',
       ]);
     });
+  });
+});
+
+function searchProblems(query: Query): string[] {
+  const result = searchQuerySchema.safeParse(query);
+  return result.success
+    ? []
+    : result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+}
+
+describe('searchQuerySchema', () => {
+  const parsedSearch = (query: Query) => {
+    const result = searchQuerySchema.safeParse(query);
+    if (!result.success) throw new Error(`expected a valid query: ${JSON.stringify(result.error.issues)}`);
+    return result.data;
+  };
+
+  it('takes a query without a sentence, exactly like the list, except that the limit has no default yet', () => {
+    expect(parsedSearch({})).toEqual({ cuisineMatch: 'any', offset: 0 });
+    expect(parsedSearch({ limit: '7' }).limit).toBe(7);
+  });
+
+  it('takes every parameter of the list, and the sentence', () => {
+    const query = {
+      name: 'dosa',
+      city: 'Gurgaon',
+      country: 'India',
+      cuisine: 'Thai,Chinese',
+      cuisineMatch: 'all',
+      minRating: '4',
+      minCost: '100',
+      maxCost: '900',
+      currency: 'inr',
+      priceRange: '2',
+      delivery: 'true',
+      booking: 'false',
+      lat: '28.5',
+      lng: '77.1',
+      radiusKm: '3',
+      sort: 'rating',
+      order: 'desc',
+      limit: '10',
+      offset: '20',
+      q: 'pizza',
+    };
+
+    expect(parsedSearch(query)).toMatchObject({
+      name: 'dosa',
+      country: 'IN',
+      cuisine: ['Thai', 'Chinese'],
+      cuisineMatch: 'all',
+      currency: 'INR',
+      delivery: true,
+      booking: false,
+      limit: 10,
+      offset: 20,
+      q: 'pizza',
+    });
+  });
+
+  it('tidies the sentence like any other text', () => {
+    expect(parsedSearch({ q: '  best   pizza \n in  Gurgaon ' }).q).toBe('best pizza in Gurgaon');
+  });
+
+  it('refuses an empty sentence and one that is too long, naming q', () => {
+    expect(searchProblems({ q: '   ' })).toEqual(['q: must not be empty']);
+    // 200 characters is part of the API, so the number is written out here instead of read from the constant.
+    expect(searchProblems({ q: 'a'.repeat(201) })).toEqual(['q: must be at most 200 characters']);
+    expect(searchProblems({ q: 'a'.repeat(200) })).toEqual([]);
+  });
+
+  it('refuses a sentence that is not one piece of text: a list, or an operator', () => {
+    expect(searchProblems({ q: ['pizza', 'thai'] })).not.toEqual([]);
+    expect(searchProblems({ q: { $ne: 'x' } })).not.toEqual([]);
+    expect(searchQuerySchema.safeParse({ 'q[$ne]': 'x' }).success).toBe(false);
+  });
+
+  it('refuses unknown parameters, like the list', () => {
+    const result = searchQuerySchema.safeParse({ query: 'pizza' });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]).toMatchObject({ code: 'unrecognized_keys', keys: ['query'] });
+  });
+
+  it('applies the rules between parameters that need no sentence', () => {
+    expect(searchProblems({ lat: '28.5' })).toEqual(['lng: is required when lat is given']);
+    expect(searchProblems({ radiusKm: '3' })).toEqual(['radiusKm: needs lat and lng']);
+    expect(searchProblems({ sort: 'distance' })).toEqual([
+      'sort: distance needs lat and lng; there is nothing to measure from',
+    ]);
+    expect(searchProblems({ lat: '1', lng: '2', sort: 'distance', order: 'desc' })).toEqual([
+      'order: distance can only be sorted nearest first',
+    ]);
+    expect(searchProblems({ minCost: '900', maxCost: '100' })).toEqual(['minCost: must not be greater than maxCost']);
+  });
+
+  it('leaves "order=desc" with a point and no sort to the search, since the sentence may name another sort', () => {
+    // The list refuses this; the search checks it after reading the sentence (mergeSearch).
+    expect(problems({ lat: '1', lng: '2', order: 'desc' })).not.toEqual([]);
+    expect(searchProblems({ lat: '1', lng: '2', order: 'desc' })).toEqual([]);
+  });
+
+  it('takes the same values as the list for every parameter they share', () => {
+    for (const query of [{ limit: '0' }, { limit: '51' }, { offset: '1001' }, { minRating: '5.1' }, { radiusKm: '51' }]) {
+      expect(searchProblems(query)).toEqual(problems(query));
+    }
+    expect(MAX_LIMIT).toBe(50);
+    expect(MAX_OFFSET).toBe(1000);
+    expect(MAX_RADIUS_KM).toBe(50);
+    expect(DEFAULT_LIMIT).toBe(20);
   });
 });
