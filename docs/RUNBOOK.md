@@ -3,7 +3,9 @@
 How to start the database and the API, check that they work, load the
 restaurants, look inside MongoDB, run every kind of test, and fix the usual
 problems. Commands are written for Windows PowerShell. The `npm` and `docker`
-commands work the same in any shell.
+commands work the same in any shell. For the overview and the quick start, see
+[README.md](../README.md); for the reasoning behind the design, see
+[DECISIONS.md](DECISIONS.md).
 
 ## At a glance
 
@@ -1115,6 +1117,8 @@ lines of `npm run db:logs`, and the full API error.
 
 | Path | Purpose |
 | --- | --- |
+| `README.md` | The overview: quick start, the three questions of the brief, the API, the architecture, the data, the tests, the assumptions and the AI disclosure |
+| `docs/DECISIONS.md` | Why it is built this way: every decision with its trade-off, and the migration, scale, security and compliance story, with what is built and what is only described |
 | `docker-compose.yml` | The `mongodb` service (Atlas Local, data volumes, port bound to 127.0.0.1), the `api` service for demo mode and the `importer` job (profile `tools`) |
 | `Dockerfile`, `.dockerignore` | Multi-stage build of the API image: compile, install production dependencies only, run as the non-root `node` user, health check on `/health` |
 | `src/config/env.schema.ts` | Every setting, its type, range and default |
