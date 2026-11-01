@@ -13,6 +13,8 @@ commands work the same in any shell.
 | Run the API with auto-reload | `npm run start:dev` |
 | Ask "is the process alive?" | `curl.exe -i http://localhost:3000/health` |
 | Ask "can it serve traffic?" | `curl.exe -i http://localhost:3000/ready` |
+| Create a restaurant (section 3.14) | `curl.exe -i -H "Content-Type: application/json" --data-binary "@docs/examples/create-restaurant.json" http://localhost:3000/v1/restaurants` |
+| Fetch it by the id that came back | `curl.exe -i http://localhost:3000/v1/restaurants/<id>` |
 | See what the API created in MongoDB | `npm run db:inspect` |
 | Open a MongoDB shell | `npm run db:shell` |
 | Watch the database refuse bad data | `npm run db:validator-demo` |
@@ -499,6 +501,110 @@ npm run import:fixes               # rewrite data/text-fixes.json if it would ch
 
 `data/README.md` explains what is damaged in the CSV and why the dumps stay out of Git.
 
+### 3.14 Create and fetch a restaurant
+
+`POST /v1/restaurants` adds a restaurant and returns it. `GET /v1/restaurants/{id}`
+returns one restaurant. The request bodies live in `docs/examples/`, so the
+commands below work in Windows PowerShell without quoting JSON by hand
+(`--data-binary "@file"` sends the file exactly as it is).
+
+```powershell
+# Create. The API answers 201 and the new restaurant.
+curl.exe -i -H "Content-Type: application/json" --data-binary "@docs/examples/create-restaurant.json" http://localhost:3000/v1/restaurants
+```
+
+What to look for in the answer:
+
+```text
+HTTP/1.1 201 Created
+Location: /v1/restaurants/65a1b2c3d4e5f60718293a4b
+X-Request-Id: 0b6c7e0e-1d1f-4a54-9c43-0d3a0f0c7b1e
+Content-Type: application/json; charset=utf-8
+
+{
+  "id": "65a1b2c3d4e5f60718293a4b",
+  "name": "Naivedhyam",
+  "address": { "line": "Shop 12, Main Market", "locality": "Sector 29", "city": "Gurgaon",
+               "country": { "code": "IN", "name": "India" } },
+  "location": { "latitude": 28.4595, "longitude": 77.0266 },
+  "cuisines": ["South Indian", "Vegetarian"],
+  "cost": { "forTwo": 800, "currency": "INR", "priceRange": 2 },
+  "rating": { "average": 4.3, "votes": 4385, "label": "Very Good", "score": 4.2903 },
+  "services": { "tableBooking": false, "onlineDelivery": true, "deliveringNow": false },
+  "status": "active",
+  "dataQuality": [],
+  "createdAt": "2026-11-01T10:30:00.000Z",
+  "updatedAt": "2026-11-01T10:30:00.000Z"
+}
+```
+
+(The id and timestamps will differ. The long lines above are wrapped for reading.)
+The request did not contain `currency`, `label`, `score`, `status`, the
+timestamps or the tenant: the server owns them. The currency comes from the
+country, the label and score from the average and the votes (the same formula
+the importer uses), and the tenant from the `X-Tenant-Id` header or the
+configured default.
+
+Fetch it with the id from `Location`:
+
+```powershell
+$created = curl.exe -s -H "Content-Type: application/json" --data-binary "@docs/examples/create-restaurant.json" http://localhost:3000/v1/restaurants | ConvertFrom-Json
+curl.exe -i http://localhost:3000/v1/restaurants/$($created.id)
+```
+
+The `GET` answer carries `Cache-Control: private, max-age=30`, `Vary: X-Tenant-Id`
+and an `ETag`. Ask again with that ETag and the server answers `304 Not Modified`
+without a body, which is what a mobile app on a poor connection wants. curl can
+store the ETag and send it back for you, which avoids quoting it by hand:
+
+```powershell
+curl.exe -s -o NUL --etag-save "$env:TEMP\etag.txt" http://localhost:3000/v1/restaurants/$($created.id)
+curl.exe -i --etag-compare "$env:TEMP\etag.txt" http://localhost:3000/v1/restaurants/$($created.id)   # 304
+```
+
+**Every error has the same shape** (RFC 9457, `Content-Type: application/problem+json`),
+carries the `X-Request-Id` of the request as `requestId`, and is sent with
+`Cache-Control: no-store`. Try each of these once:
+
+| Request | Answer | What it shows |
+| --- | --- | --- |
+| `POST` with `docs/examples/create-restaurant-invalid.json` | `400`, `errors` lists `#/name`, `#/address/countryCode`, `#/cost/priceRange` and `#/tenantId` | Every faulty field in one answer. A field the client does not own (`tenantId`) is refused, not ignored. |
+| `POST` the same `create-restaurant-with-source.json` twice | `201`, then `409` with `errors[0].pointer` = `#/source` | The unique index on tenant plus source makes a retry safe. |
+| `GET /v1/restaurants/abc` | `400`, `parameter` = `id` | A malformed id is a client mistake, not a 404 and not a 500. |
+| `GET /v1/restaurants/000000000000000000000000` | `404` | A well-formed id nobody has. |
+| `GET` with `-H "X-Tenant-Id: bad tenant!"` | `400`, `parameter` = `X-Tenant-Id` | The tenant header is validated before it touches a query. |
+| `curl.exe -i -H "Content-Type: application/json" --data-binary "{oops" http://localhost:3000/v1/restaurants` | `400`, title `Bad Request` | A parser error is an answer, not a stack trace. |
+| `GET /v1/nothing-here` | `404` as a problem document | Unknown routes answer in the same format. |
+
+Swap `latitude` and `longitude` in `create-restaurant.json` and you get a `400` at
+`#/location`: "These coordinates are outside India. Check that latitude and
+longitude are not swapped." That check applies only to Indian restaurants.
+
+Two tenants in one command (a demo of the tenant boundary):
+
+```powershell
+$a = curl.exe -s -H "X-Tenant-Id: acme" -H "Content-Type: application/json" --data-binary "@docs/examples/create-restaurant.json" http://localhost:3000/v1/restaurants | ConvertFrom-Json
+curl.exe -s -o NUL -w "%{http_code}`n" -H "X-Tenant-Id: acme"   http://localhost:3000/v1/restaurants/$($a.id)   # 200
+curl.exe -s -o NUL -w "%{http_code}`n" -H "X-Tenant-Id: globex" http://localhost:3000/v1/restaurants/$($a.id)   # 404
+```
+
+The `X-Tenant-Id` header exists only so that this demo takes one command. Trusting
+a header lets any caller act for any tenant; in production the tenant comes from
+the caller's verified credential (an API key or a token claim).
+
+See the stored document, and compare it with the answer:
+
+```powershell
+npm run db:shell
+# then, inside mongosh:
+db.restaurants.findOne({ name: "Naivedhyam", tenantId: "biteexpress" })
+```
+
+You will see `location` as GeoJSON with longitude first
+(`{ type: "Point", coordinates: [77.0266, 28.4595] }`), `tenantId`, `schemaVersion`
+and `_id` as an `ObjectId`: the API names the coordinates `latitude` and
+`longitude` and hides the rest.
+
 ## 4. What happens when the API starts
 
 1. `ConfigModule` validates the environment against the Zod schema in
@@ -588,7 +694,10 @@ lines of `npm run db:logs`, and the full API error.
 | `src/importer/*.spec.ts` | Unit tests for each of those. `sample-data.spec.ts` cleans the committed sample for real and checks it against known numbers and the collection validator |
 | `data/` | The 500-row sample and `text-fixes.json`; `full/` is for the unzipped archive and is ignored by Git. `data/README.md` explains each file |
 | `scripts/mongosh/` | The scripts behind `npm run db:inspect` and `npm run db:validator-demo` |
-| `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, and the per-run test-database setup |
+| `src/http/` | Everything shared by the HTTP layer. `problem.ts` decides how every failure is reported (RFC 9457), `problem-details.filter.ts` writes it, `request-context.ts` gives each request an id and an access-log line, `zod-validation.pipe.ts` turns Zod errors into field errors, `tenant.ts` reads the tenant header, `api-prefix.ts` holds `v1` |
+| `src/restaurants/` | The restaurant resource. `create-restaurant.schema.ts` is the request contract, `build-restaurant.ts` turns a request into the stored document, `restaurant.resource.ts` turns a stored document into the answer, `restaurants.service.ts` holds the use cases, `restaurant.store.ts` is the storage port and `mongo-restaurant.store.ts` its MongoDB adapter, `restaurants.controller.ts` is the HTTP glue |
+| `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, the per-run test-database setup, `InMemoryRestaurantStore` and `restaurant-store.contract.ts` (the checks both stores must pass) |
+| `test/restaurants.e2e-spec.ts`, `test/restaurants.int-spec.ts` | Create and fetch through the whole HTTP stack with no database, and against a real MongoDB |
 | `test/mongo.int-spec.ts` | Integration tests against a real MongoDB |
 | `test/importer.int-spec.ts` | Integration tests for the importer against a real MongoDB |
 | `test/support/zomato-rows.ts`, `test/support/json-schema-lite.ts` | A builder for CSV rows, and a small checker that says whether the collection validator would accept a document, so `npm test` can prove it without a database |
@@ -661,10 +770,56 @@ lines of `npm run db:logs`, and the full API error.
   restaurant id, built once from the API dumps, because a rule that guesses
   could corrupt a name that was correct.
 
+- **One error format, decided in one place.** Every failure is an RFC 9457
+  `application/problem+json` document with a stable `type`, the HTTP status, a
+  `detail`, the request's `instance` and `requestId`, and for validation a list of
+  `errors` that point at the faulty field with a JSON Pointer (`#/address/city`) or
+  name the faulty parameter. One global filter writes it; `toErrorResponse` in
+  `problem.ts` decides what it says, so the rules are unit-tested without HTTP. A
+  bug answers a generic 500 that only quotes the request id; the log has the
+  real error. Trade-off: services throw exceptions that carry HTTP semantics.
+  With two services and no second transport, a domain-error layer plus a
+  translation table would cost more than it saves.
+- **A body someone shaped on purpose is respected.** `/ready` throws a 503
+  whose body is its report. The filter recognises a Nest exception whose body does
+  not have Nest's standard shape and sends it untouched, so adding a global
+  filter did not change an existing contract.
+- **Strict request schemas.** Every object in the create body is strict: a field
+  the contract does not name (`tenantId`, `createdAt`, `rating.score`, a typo,
+  `__proto__`) is a 400, never silently dropped. A client cannot write what it
+  does not own, and a typo is reported instead of becoming a missing value.
+- **The server owns derived data.** Currency comes from the country, the label and
+  the weighted score from the average and the votes, `dataQuality` from whether
+  coordinates exist, timestamps and status from the server. The formulas are the
+  importer's, so a restaurant created through the API ranks exactly like an
+  imported one.
+- **The API says `latitude` and `longitude`; the database says GeoJSON.** The
+  one place where the order flips (`[longitude, latitude]`) is `build-restaurant.ts`
+  on the way in and `restaurant.resource.ts` on the way out, both tested.
+- **A duplicate is the database's decision.** Creating a restaurant with a source
+  that the tenant already has is refused by the unique index (error 11000, mapped
+  to a 409), not by a read followed by a write, which two concurrent requests
+  could both pass.
+- **Another tenant's id is a 404.** A 403 would confirm that the id exists.
+- **A strict id.** A restaurant id is the `ObjectId` as 24 hexadecimal characters.
+  The check is a regular expression, because `new ObjectId("restaurantXY")`
+  accepts any 12-character string.
+- **Cache what is safe to cache.** A successful `GET` is `private, max-age=30`
+  with an ETag and `Vary: X-Tenant-Id`; errors are `no-store`. The headers are set
+  after the lookup, so a failure is never cached.
+- **Storage behind a port, and a contract that keeps the fake honest.** The service
+  talks to a `RestaurantStore`. Tests use an in-memory store; production uses the
+  MongoDB one. The same contract tests run against both (`npm test` and
+  `npm run test:int`), so the stand-in cannot drift from the real thing.
+- **The tenant header is a demo.** See section 3.14. It is validated like any other
+  input and documented as the part to replace with a credential.
+
 ## 9. Not covered yet
 
-- The create and fetch endpoints (Step 4), the list endpoint (Step 5) and the
-  search queries (Step 7) are not built yet.
+- The list endpoint (Step 5) and the search queries (Step 7) are not built yet.
+- Restaurants cannot be updated or deleted through the API; the brief asks for
+  create and read only.
+- There is no authentication. The tenant comes from a header (demo only).
 - The importer never deletes. A restaurant that disappears from the CSV stays in
   the database; there is no mode that removes what a file no longer lists.
 - The image URL, menu URL and zip code that the API dumps carry are not imported

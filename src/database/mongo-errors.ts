@@ -4,6 +4,8 @@ export const MongoErrorCode = {
   NamespaceExists: 48,
   IndexOptionsConflict: 85,
   IndexKeySpecsConflict: 86,
+  /** A unique index refused the write: the value already exists. */
+  DuplicateKey: 11000,
 } as const;
 
 /** The numeric `code` of a MongoDB server error, or undefined for anything else. */

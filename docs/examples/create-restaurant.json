@@ -1,0 +1,14 @@
+{
+  "name": "Naivedhyam",
+  "address": {
+    "line": "Shop 12, Main Market",
+    "locality": "Sector 29",
+    "city": "Gurgaon",
+    "countryCode": "IN"
+  },
+  "location": { "latitude": 28.4595, "longitude": 77.0266 },
+  "cuisines": ["South Indian", "Vegetarian"],
+  "cost": { "forTwo": 800, "priceRange": 2 },
+  "rating": { "average": 4.3, "votes": 4385 },
+  "services": { "tableBooking": false, "onlineDelivery": true, "deliveringNow": false }
+}

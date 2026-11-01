@@ -1,0 +1,6 @@
+{
+  "name": "   ",
+  "address": { "city": "Gurgaon", "countryCode": "XX" },
+  "cost": { "priceRange": 9 },
+  "tenantId": "someone-else"
+}
