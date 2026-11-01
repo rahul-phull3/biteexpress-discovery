@@ -116,7 +116,7 @@ export function issuesToFieldErrors(
         fieldError(
           target,
           [...issue.path, key],
-          `Unknown field "${key}". Remove it.`,
+          `Unknown ${target === 'body' ? 'field' : 'parameter'} "${key}". Remove it.`,
         ),
       );
     }

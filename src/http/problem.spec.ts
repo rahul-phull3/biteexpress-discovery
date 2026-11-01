@@ -83,7 +83,7 @@ describe('issuesToFieldErrors', () => {
     );
 
     expect(errors).toEqual([
-      { parameter: 'colour', detail: 'Unknown field "colour". Remove it.' },
+      { parameter: 'colour', detail: 'Unknown parameter "colour". Remove it.' },
     ]);
   });
 });

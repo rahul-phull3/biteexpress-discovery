@@ -1,15 +1,20 @@
+import type { ListCriteria } from '../../src/restaurants/list-criteria';
 import type { RestaurantDocument } from '../../src/restaurants/restaurant.document';
 import {
   DuplicateSourceError,
+  type ListResult,
   type RestaurantStore,
   type StoredRestaurant,
 } from '../../src/restaurants/restaurant.store';
+import type { VocabularyData } from '../../src/restaurants/vocabulary';
+import { listFrom, vocabularyFrom } from './in-memory-listing';
 
 /**
  * A RestaurantStore that keeps restaurants in memory, for tests of the service
  * and of the HTTP layer that must not need a database. It keeps the rules the
  * service relies on: an id is 24 hexadecimal characters, a (tenant, source)
- * pair is unique, and a read only sees the asking tenant's restaurants.
+ * pair is unique, a read only sees the asking tenant's restaurants, and a
+ * listing filters and orders the way the MongoDB queries do (in-memory-listing.ts).
  *
  * restaurant-store.contract.ts holds the checks that this class and the
  * MongoDB store both pass, so this stand-in cannot quietly drift away from the
@@ -55,5 +60,13 @@ export class InMemoryRestaurantStore implements RestaurantStore {
       (candidate) => candidate.id === id && candidate.doc.tenantId === tenantId,
     );
     return row ? structuredClone(row) : null;
+  }
+
+  async list(tenantId: string, criteria: ListCriteria): Promise<ListResult> {
+    return listFrom(this.rows, tenantId, criteria);
+  }
+
+  async vocabulary(tenantId: string): Promise<VocabularyData> {
+    return vocabularyFrom(this.rows, tenantId);
   }
 }

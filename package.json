@@ -30,6 +30,7 @@
     "db:shell": "docker compose exec mongodb mongosh biteexpress",
     "db:inspect": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/inspect.js",
     "db:validator-demo": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/validator-demo.js",
+    "db:explain": "docker compose exec -T mongodb mongosh biteexpress --quiet --file /scripts/explain.js",
     "db:import": "docker compose run --rm --build importer",
     "import": "nest build && node dist/importer/main.js",
     "import:dry": "nest build && node dist/importer/main.js --dry-run",

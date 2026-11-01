@@ -37,7 +37,7 @@ services:
       - mongo-data:/data/db
       - mongo-config:/data/configdb
       - mongot-data:/data/mongot
-      # Helper scripts for `npm run db:inspect` and `npm run db:validator-demo`.
+      # Helper scripts for `npm run db:inspect`, `npm run db:validator-demo` and `npm run db:explain`.
       # Read-only, so nothing in the container can change your files.
       - ./scripts/mongosh:/scripts:ro
     restart: unless-stopped

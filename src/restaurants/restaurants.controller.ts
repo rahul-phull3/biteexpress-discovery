@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import { API_PREFIX } from '../http/api-prefix';
@@ -15,7 +16,9 @@ import {
   createRestaurantSchema,
   type CreateRestaurantInput,
 } from './create-restaurant.schema';
+import { listQuerySchema, type ListQuery } from './list-query.schema';
 import { RestaurantIdPipe } from './restaurant-id';
+import type { RestaurantListResponse } from './restaurant.list-item';
 import type { RestaurantResource } from './restaurant.resource';
 import { RestaurantsService } from './restaurants.service';
 
@@ -32,6 +35,14 @@ interface HeaderWriter {
  * tenant comes from the host name and a CDN may share the answer.
  */
 const DETAIL_CACHE_CONTROL = 'private, max-age=30';
+
+/**
+ * Listings change whenever a restaurant is added, so an app may reuse one for
+ * only 15 seconds. During a rush that still absorbs the repeated "restaurants
+ * near me" taps of one app. (No ETag revalidation to speak of: the body carries
+ * `tookMs`, which differs every time.) Set it to 'no-cache' to switch caching off.
+ */
+const LIST_CACHE_CONTROL = 'private, max-age=15';
 
 /**
  * ROUTE ORDER: paths with a fixed word (search, bulk, by-source) are declared
@@ -53,6 +64,19 @@ export class RestaurantsController {
     const restaurant = await this.restaurants.create(tenantId, input);
     res.setHeader('Location', `/${API_PREFIX}/restaurants/${restaurant.id}`);
     return restaurant;
+  }
+
+  @Get()
+  async list(
+    @TenantId() tenantId: string,
+    @Query(new ZodValidationPipe(listQuerySchema, 'query')) query: ListQuery,
+    @Res({ passthrough: true }) res: HeaderWriter,
+  ): Promise<RestaurantListResponse> {
+    const page = await this.restaurants.list(tenantId, query);
+    // Set after the query, so an error response is never cached.
+    res.setHeader('Cache-Control', LIST_CACHE_CONTROL);
+    res.setHeader('Vary', 'X-Tenant-Id');
+    return page;
   }
 
   @Get(':id')

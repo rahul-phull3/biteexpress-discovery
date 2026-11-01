@@ -1,8 +1,10 @@
 import { InMemoryRestaurantStore } from '../../test/support/in-memory-restaurant-store';
 import { ProblemException } from '../http/problem';
 import { createRestaurantSchema } from './create-restaurant.schema';
+import { listQuerySchema } from './list-query.schema';
 import type { RestaurantStore } from './restaurant.store';
 import { RestaurantsService } from './restaurants.service';
+import { VocabularyService } from './vocabulary.service';
 
 const NOW = new Date('2026-11-01T10:30:00.000Z');
 
@@ -12,6 +14,8 @@ const input = (extra: object = {}) =>
     address: { city: 'Gurgaon', countryCode: 'IN' },
     ...extra,
   });
+
+const listQuery = (query: Record<string, unknown> = {}) => listQuerySchema.parse(query);
 
 async function problemOf(promise: Promise<unknown>): Promise<ProblemException['problem']> {
   try {
@@ -29,7 +33,7 @@ describe('RestaurantsService', () => {
 
   beforeEach(() => {
     store = new InMemoryRestaurantStore();
-    service = new RestaurantsService(store);
+    service = new RestaurantsService(store, new VocabularyService(store));
   });
 
   describe('create', () => {
@@ -79,11 +83,13 @@ describe('RestaurantsService', () => {
           throw new Error('connection reset');
         },
         findById: async () => null,
+        list: async () => ({ items: [], hasMore: false }),
+        vocabulary: async () => ({ cities: [], cuisines: [] }),
       };
 
-      await expect(new RestaurantsService(broken).create('tenant-a', input(), NOW)).rejects.toThrow(
-        'connection reset',
-      );
+      await expect(
+        new RestaurantsService(broken, new VocabularyService(broken)).create('tenant-a', input(), NOW),
+      ).rejects.toThrow('connection reset');
     });
   });
 
@@ -111,6 +117,122 @@ describe('RestaurantsService', () => {
 
       expect(problem.status).toBe(404);
       expect(problem.detail).toBe(`No restaurant has the id ${created.id}.`);
+    });
+  });
+
+  describe('list', () => {
+    const serving = (name: string, extra: object = {}) =>
+      input({ name, cuisines: ['South Indian'], rating: { average: 4, votes: 100 }, ...extra });
+
+    it('answers with the page, the order that was applied and the time it took', async () => {
+      await service.create('tenant-a', serving('Naivedhyam'), NOW);
+
+      const response = await service.list('tenant-a', listQuery());
+
+      expect(response.data).toHaveLength(1);
+      expect(response.data[0]).toMatchObject({
+        name: 'Naivedhyam',
+        city: 'Gurgaon',
+        country: 'India',
+        cuisines: ['South Indian'],
+        averageRating: 4,
+      });
+      expect(response.page).toEqual({ limit: 20, offset: 0, hasMore: false });
+      expect(response.meta).toMatchObject({ sort: 'rating', order: 'desc' });
+      expect(response.meta.tookMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("lists only the asking tenant's restaurants", async () => {
+      await service.create('tenant-a', serving('Mine'), NOW);
+      await service.create('tenant-b', serving('Theirs'), NOW);
+
+      const response = await service.list('tenant-a', listQuery());
+
+      expect(response.data.map((item) => item.name)).toEqual(['Mine']);
+    });
+
+    it('finds Gurgaon when the app says Gurugram, and South Indian when it says south indian', async () => {
+      await service.create('tenant-a', serving('Naivedhyam'), NOW);
+
+      const response = await service.list('tenant-a', listQuery({ city: 'gurugram', cuisine: 'south indian' }));
+
+      expect(response.data.map((item) => item.name)).toEqual(['Naivedhyam']);
+    });
+
+    it('knows a new city at once: creating a restaurant makes the cached vocabulary stale', async () => {
+      await service.create('tenant-a', serving('Naivedhyam'), NOW);
+      await service.list('tenant-a', listQuery());
+
+      await service.create(
+        'tenant-a',
+        input({ name: 'Pune Place', address: { city: 'Pune', countryCode: 'IN' } }),
+        NOW,
+      );
+      const response = await service.list('tenant-a', listQuery({ city: 'pune' }));
+
+      expect(response.data.map((item) => item.name)).toEqual(['Pune Place']);
+    });
+
+    it('asks the store for the vocabulary once for several listings', async () => {
+      const spy = jest.spyOn(store, 'vocabulary');
+      await service.create('tenant-a', serving('Naivedhyam'), NOW);
+
+      await service.list('tenant-a', listQuery());
+      await service.list('tenant-a', listQuery({ city: 'Gurgaon' }));
+      await service.list('tenant-a', listQuery({ cuisine: 'Thai' }));
+
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports the distance only when the request has a point', async () => {
+      await service.create('tenant-a', serving('Naivedhyam', { location: { latitude: 28.4595, longitude: 77.0266 } }), NOW);
+
+      const near = await service.list('tenant-a', listQuery({ lat: '28.4595', lng: '77.0266' }));
+      const anywhere = await service.list('tenant-a', listQuery());
+
+      expect(near.data[0]).toMatchObject({ distanceKm: 0 });
+      expect(near.meta).toMatchObject({ sort: 'distance', order: 'asc' });
+      expect(anywhere.data[0]).not.toHaveProperty('distanceKm');
+    });
+
+    it('says whether another page follows', async () => {
+      await service.create('tenant-a', serving('First'), NOW);
+      await service.create('tenant-a', serving('Second'), NOW);
+
+      const first = await service.list('tenant-a', listQuery({ limit: '1', sort: 'name' }));
+      const second = await service.list('tenant-a', listQuery({ limit: '1', offset: '1', sort: 'name' }));
+
+      expect(first.data.map((item) => item.name)).toEqual(['First']);
+      expect(first.page).toEqual({ limit: 1, offset: 0, hasMore: true });
+      expect(second.data.map((item) => item.name)).toEqual(['Second']);
+      expect(second.page).toEqual({ limit: 1, offset: 1, hasMore: false });
+    });
+
+    it('reports the direction it chose when the request named only the sort', async () => {
+      const response = await service.list('tenant-a', listQuery({ sort: 'name' }));
+
+      expect(response.meta).toMatchObject({ sort: 'name', order: 'asc' });
+    });
+
+    it('lists nothing for a tenant without restaurants', async () => {
+      const response = await service.list('nobody', listQuery());
+
+      expect(response.data).toEqual([]);
+      expect(response.page.hasMore).toBe(false);
+    });
+
+    it('does not hide a failure of the store behind an empty page', async () => {
+      jest.spyOn(store, 'list').mockRejectedValue(new Error('connection reset'));
+
+      await expect(service.list('tenant-a', listQuery())).rejects.toThrow('connection reset');
+    });
+
+    it('does not hide a failure to read the vocabulary, and tries again on the next request', async () => {
+      const spy = jest.spyOn(store, 'vocabulary').mockRejectedValueOnce(new Error('connection reset'));
+
+      await expect(service.list('tenant-a', listQuery())).rejects.toThrow('connection reset');
+      await expect(service.list('tenant-a', listQuery())).resolves.toHaveProperty('data');
+      expect(spy).toHaveBeenCalledTimes(2);
     });
   });
 });

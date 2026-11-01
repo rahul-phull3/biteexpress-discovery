@@ -22,3 +22,33 @@ export function findCountryByIsoCode(code: string): Country | undefined {
 export function supportedCountryCodes(): string[] {
   return [...BY_ISO_CODE.keys()].sort();
 }
+
+/** Names people use for a country besides the one in the table, in lower case. */
+const COUNTRY_NICKNAMES: ReadonlyMap<string, string> = new Map([
+  ['uk', 'GB'],
+  ['great britain', 'GB'],
+  ['england', 'GB'],
+  ['usa', 'US'],
+  ['united states of america', 'US'],
+  ['america', 'US'],
+  ['uae', 'AE'],
+  ['emirates', 'AE'],
+  ['bharat', 'IN'],
+]);
+
+const BY_NAME: ReadonlyMap<string, string> = new Map(
+  [...BY_ISO_CODE.values()].map((country) => [country.name.toLowerCase(), country.code] as const),
+);
+
+/**
+ * The country for what a person types: an ISO code ("in"), a name ("India")
+ * or a common nickname ("UK"), in any letter case. Undefined when it is none of them.
+ */
+export function findCountryByNameOrCode(input: string): Country | undefined {
+  const value = input.trim();
+  const byCode = BY_ISO_CODE.get(value.toUpperCase());
+  if (byCode) return byCode;
+  const lower = value.toLowerCase();
+  const code = BY_NAME.get(lower) ?? COUNTRY_NICKNAMES.get(lower);
+  return code ? BY_ISO_CODE.get(code) : undefined;
+}

@@ -15,9 +15,11 @@ commands work the same in any shell.
 | Ask "can it serve traffic?" | `curl.exe -i http://localhost:3000/ready` |
 | Create a restaurant (section 3.14) | `curl.exe -i -H "Content-Type: application/json" --data-binary "@docs/examples/create-restaurant.json" http://localhost:3000/v1/restaurants` |
 | Fetch it by the id that came back | `curl.exe -i http://localhost:3000/v1/restaurants/<id>` |
+| List and filter restaurants (section 3.15) | `curl.exe -s "http://localhost:3000/v1/restaurants?city=Gurgaon&limit=5"` |
 | See what the API created in MongoDB | `npm run db:inspect` |
 | Open a MongoDB shell | `npm run db:shell` |
 | Watch the database refuse bad data | `npm run db:validator-demo` |
+| Check that the listing queries use indexes | `npm run db:explain` |
 | Run the unit tests | `npm test` |
 | Run the HTTP tests (no database needed) | `npm run test:e2e` |
 | Run the tests against a real MongoDB | `npm run test:int` |
@@ -85,6 +87,11 @@ npm run check              # lint, type-check, unit and HTTP tests
 `data/.gitignore` keeps the unzipped archive (`data/full/`) out of Git. Nothing
 else in `data/` is ignored: the sample and `text-fixes.json` are committed.
 
+Steps 4 and 5 (create and fetch, then list) add no dependency. Apply them the same
+way (`step4-overlay.zip`, then `step5-overlay.zip`) and run `npm run check`.
+Step 5 changes `package.json` by one script (`db:explain`) and adds one index,
+`tenant_score`, which the API creates the next time it starts.
+
 ## 3. Everyday tasks
 
 ### 3.1 Start the database
@@ -125,7 +132,7 @@ On a first start against an empty database you should see log lines like these
 
 ```text
 LOG [SchemaBootstrapService] Created collection "restaurants" with its $jsonSchema validator
-LOG [SchemaBootstrapService] Indexes in place: tenant_location_2dsphere, tenant_city_score, tenant_city_cuisine_score, tenant_source_unique
+LOG [SchemaBootstrapService] Indexes in place: tenant_location_2dsphere, tenant_city_score, tenant_city_cuisine_score, tenant_score, tenant_source_unique
 LOG [SchemaBootstrapService] Search index "restaurants_search" requested; it builds in the background
 LOG [NestApplication] Nest application successfully started
 ```
@@ -160,7 +167,7 @@ Expected for `/ready` once everything is up: `200 OK` and a body like
   "mongodb": { "status": "up", "latencyMs": 3 },
   "indexes": {
     "status": "ok",
-    "present": ["_id_", "tenant_location_2dsphere", "tenant_city_score", "tenant_city_cuisine_score", "tenant_source_unique"],
+    "present": ["_id_", "tenant_location_2dsphere", "tenant_city_score", "tenant_city_cuisine_score", "tenant_score", "tenant_source_unique"],
     "missing": []
   },
   "search": { "index": "restaurants_search", "status": "READY", "queryable": true }
@@ -238,9 +245,9 @@ and acceptance for a valid restaurant and for one with an extra field.
 
 | Command | Needs | What it proves |
 | --- | --- | --- |
-| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator |
-| `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes |
-| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice |
+| `npm test` | nothing | Pure logic: config schema, bootstrap call order and error handling, readiness decisions, URI redaction, the collection definition. For the importer: every cleaning rule, the upsert operations, the report, the command line, and the committed sample cleaned for real and checked against the collection validator. For the restaurant API: the request schemas, the error format, the service, the listing rules (query parameters, the MongoDB query builder, the lists of cities and cuisines), and the contract checks run on the in-memory store |
+| `npm run test:e2e` | nothing | The real Nest app over HTTP with MongoDB faked: routes, status codes, headers, the `/v1` prefix not applying to the probes; creating, fetching and listing restaurants, and the error answer of every refusal |
+| `npm run test:int` | `npm run db:up` | What only a real server can prove: validator rejections (error 121), indexes exist, bootstrap is repeatable, unique and partial index behaviour, `$geoNear` ordering and distances, `/ready` against the real database. For the importer: the sample imported twice leaves 500 documents and changes only `updatedAt`, two tenants stay apart, one refused restaurant costs one restaurant, the upsert uses `tenant_source_unique`, and the whole command ends in `Result: PASS`. With the archive in `data/full/`, it also imports all 9,551 rows twice. For the restaurant API: the contract checks again on the MongoDB store, the listing queries on 60 real documents (no `COLLSCAN`, the geo index used, distances right), and create, fetch and list over HTTP on a real database |
 | `npm run check` | nothing | Lint, type-check, `npm test` and `npm run test:e2e`, stopping at the first failure |
 
 `npm run test:int` creates a throwaway database named `biteexpress_it_<random>`
@@ -605,6 +612,210 @@ You will see `location` as GeoJSON with longitude first
 and `_id` as an `ObjectId`: the API names the coordinates `latitude` and
 `longitude` and hides the rest.
 
+### 3.15 List and filter restaurants
+
+`GET /v1/restaurants` returns one page of restaurants. Every parameter is optional
+and goes in the query string. With none, you get the tenant's best-rated
+restaurants, 20 to a page.
+
+Start the API and load some restaurants first (`npm run import`). This helper
+prints a page as a table; define it once per PowerShell window:
+
+```powershell
+$api = "http://localhost:3000/v1/restaurants"
+function Show-Restaurants($url) {
+  (curl.exe -s $url | ConvertFrom-Json).data |
+    Format-Table name, locality, city, averageRating, votes, costForTwo, currency, distanceKm -AutoSize
+}
+```
+
+(In Windows PowerShell 5.1, accented letters look wrong until you run
+`[Console]::OutputEncoding = [Text.Encoding]::UTF8`.)
+
+Some questions to ask. The comments say what the 500-row sample returns:
+
+```powershell
+Show-Restaurants "${api}?limit=5"                                                # best rated anywhere
+Show-Restaurants "${api}?city=Gurugram&limit=5"                                  # Gurugram is understood as Gurgaon (48 in the sample)
+Show-Restaurants "${api}?city=Gurgaon&cuisine=South%20Indian"                    # 1 in the sample, 70 in the full dataset
+Show-Restaurants "${api}?city=Gurgaon&currency=INR&maxCost=999&limit=5"          # "under Rs. 1000 for two": 35 in the sample
+Show-Restaurants "${api}?lat=28.495&lng=77.089&limit=5"                          # nearest to Cyber Hub, nearest first
+Show-Restaurants "${api}?lat=28.495&lng=77.089&radiusKm=3&sort=rating&limit=5"   # best rated within 3 km of Cyber Hub (17 in range)
+Show-Restaurants "${api}?city=Gurgaon&currency=INR&sort=cost&limit=3"            # cheapest first
+Show-Restaurants "${api}?city=Gurgaon&limit=2&offset=2"                          # the second page of two
+```
+
+The nearest-to-Cyber-Hub query should give these five, in this order:
+
+```text
+Cherry Comet            Cyber Hub, DLF Cyber City   0.04 km
+Farzi Cafe              Cyber Hub, DLF Cyber City   0.04 km
+Rred Hot Asian Bistro   Cyber Hub, DLF Cyber City   0.05 km
+The Grill Mill          Cyber Hub, DLF Cyber City   0.12 km
+Kusum Rolls             DLF Phase 3                 0.6 km
+```
+
+The raw answer, for two restaurants (only the first is shown; the `id` will differ):
+
+```powershell
+curl.exe -i "${api}?lat=28.495&lng=77.089&limit=2"
+```
+
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, max-age=15
+Vary: X-Tenant-Id
+X-Request-Id: 5d1c7f0e-61a4-4f43-9a0e-3a9d2b7e1c55
+Content-Type: application/json; charset=utf-8
+
+{
+  "data": [
+    {
+      "id": "65a1b2c3d4e5f60718293a4b",
+      "name": "Cherry Comet",
+      "address": "K-5/A, Near Building 8-B Entrance, Cyber hub, DLF Cyber City, Gurgaon",
+      "locality": "Cyber Hub, DLF Cyber City",
+      "city": "Gurgaon",
+      "country": "India",
+      "countryCode": "IN",
+      "cuisines": ["Ice Cream", "Desserts"],
+      "averageRating": 3.6,
+      "votes": 455,
+      "costForTwo": 400,
+      "currency": "INR",
+      "distanceKm": 0.04
+    },
+    { "...": "the second restaurant, same fields" }
+  ],
+  "page": { "limit": 2, "offset": 0, "hasMore": true },
+  "meta": { "sort": "distance", "order": "asc", "tookMs": 3 }
+}
+```
+
+How to read it:
+
+- `page.hasMore` says whether another page exists. There is no total on purpose:
+  counting every match on every request is a second query, and an app only needs
+  to know whether to offer "more".
+- `meta.sort` and `meta.order` are the order that was used, so you can see what
+  the default was when you did not choose. `meta.tookMs` is the time the server
+  spent on the listing.
+- The brief's attribute names map to these fields: Id → `id`, Name → `name`,
+  Address → `address` (the street line; `locality` is the neighbourhood),
+  City → `city`, Country → `country` (`countryCode` is the ISO code),
+  Cuisines → `cuisines`, Average Rating → `averageRating` (`null` when nobody
+  has rated it), Distance → `distanceKm` (only when `lat` and `lng` were given).
+
+**The parameters**
+
+| Parameter | What it does | Notes |
+| --- | --- | --- |
+| `name` | The name contains this text, ignoring case | Taken literally: `name=a.b` finds "a.b", not "aXb". Up to 100 characters |
+| `city` | The restaurant is in this city | Case and extra spaces do not matter, and well-known other names are understood (`Gurugram` for `Gurgaon`, `Bengaluru` for `Bangalore`). A city nobody has gives an empty page, not an error |
+| `country` | The restaurant is in this country | A name or an ISO code: `India`, `IN`, `UK`, `USA` |
+| `cuisine` | Serves this cuisine | One name, several separated by commas, or the parameter repeated: `cuisine=Thai,Chinese`. A restaurant matches if it serves any of them; add `cuisineMatch=all` to require all of them. It only filters: every answer still lists all of the restaurant's cuisines |
+| `minRating` | The average rating is at least this | 0 to 5, the plain average, not the weighted score. Unrated restaurants never match |
+| `minCost`, `maxCost` | The average cost for two is between these, inclusive | Whole numbers, in each restaurant's own currency. Restaurants with no known cost never match |
+| `currency` | Only restaurants priced in this currency | Three letters, such as `INR`. Add it whenever you use a cost, or 500 rupees and 500 dirhams count as the same |
+| `priceRange` | Zomato's price band | 1 (cheapest) to 4 |
+| `delivery`, `booking` | Offers online delivery / takes table bookings | `true` or `false` |
+| `lat`, `lng` | Measure the distance from this point | Both or neither. Every item then carries `distanceKm`, and restaurants without coordinates are left out |
+| `radiusKm` | Only restaurants within this distance | More than 0, at most 50. Needs `lat` and `lng` |
+| `sort` | The order | `rating` (the default), `distance` (the default when `lat` and `lng` are given), `averageRating`, `votes`, `cost`, `name`, `city` |
+| `order` | `asc` or `desc` | Every sort has a natural direction (next list); this reverses it |
+| `limit`, `offset` | Page size, and where the page starts | `limit` 1 to 50 (default 20); `offset` 0 to 1000 (default 0) |
+
+**How a page is ordered**
+
+- `rating` is a weighted score, not the plain average. It pulls restaurants with
+  few votes towards the overall mean, so a 4.9 from 3 votes does not beat a 4.5
+  from 3,000. `sort=averageRating` uses the plain average (equal averages: more
+  votes first).
+- Natural directions: `rating`, `averageRating` and `votes` start with the
+  highest; `cost`, `name` and `city` start with the lowest or A; `distance` is
+  always nearest first, and `order=desc` with it is refused.
+- `order` reverses the whole list, ties included: `order=asc` on a best-first
+  list is that list backwards.
+- A restaurant with no rating, or no known cost, goes last when the sort runs
+  highest first and is left out when it runs lowest first: "no rating" is not
+  "the worst rating", and "no cost" is not "free".
+- Restaurants with equal values are ordered by id, so paging never shows one
+  twice or skips one. (The exception: restaurants at exactly the same point have
+  the same distance, and MongoDB does not promise an order among them.)
+- `sort=city` goes A to Z by city and, inside each city, best first.
+- Distances are in kilometres, rounded to 10 metres.
+
+**What the API refuses.** A bad query is a `400` in the same problem format as
+everything else, with one `errors` entry per faulty parameter. A misspelled
+parameter is refused rather than ignored, because ignoring it would return an
+unfiltered list that looks right.
+
+| Request (after `$api`) | Answer | What it shows |
+| --- | --- | --- |
+| `?sort=distance` | `400`, `parameter` = `sort` | A distance needs a point to measure from |
+| `?lat=28.5` | `400`, `parameter` = `lng` | A point needs both coordinates |
+| `?limit=500` | `400`, `parameter` = `limit` | A page has at most 50 restaurants |
+| `?minCost=900&maxCost=100` | `400`, `parameter` = `minCost` | An empty range is a mistake, not an empty answer |
+| `?minRating=abc&radiusKm=1e3` | `400`, two entries | Every faulty parameter in one answer, each once |
+| `?colour=red` | `400`, `Unknown parameter "colour". Remove it.` | A typo is reported |
+| `?city=Atlantis` | `200`, `"data": []` | A question with no answers is not an error |
+
+The last operator-injection check needs curl's `-g` (otherwise curl treats the
+brackets as a pattern) and single quotes (PowerShell would expand `$ne`):
+
+```powershell
+curl.exe -g -s 'http://localhost:3000/v1/restaurants?city[$ne]=x'
+```
+
+The answer is a `400` naming the parameter `city[$ne]`. Every value must be plain
+text, so a MongoDB operator never reaches the database.
+
+**Check the answers against MongoDB itself**
+
+```powershell
+npm run db:shell
+# then, inside mongosh:
+db.restaurants.countDocuments({ tenantId: "biteexpress", "address.city": "Gurgaon", cuisines: "South Indian" })
+# 1 with the sample, 70 with the full dataset
+db.restaurants.countDocuments({ tenantId: "biteexpress", "address.city": "Gurgaon", "cost.currency": "INR", "cost.forTwo": { $lte: 999 } })
+# 35 with the sample; the API above shows the same restaurants, 20 to a page
+```
+
+**Check that every listing query uses an index**
+
+```powershell
+npm run db:explain
+```
+
+It asks MongoDB how it would run fifteen queries: ten typical listings, three
+"near me" searches and the two that read the lists of cities and cuisines. It
+prints one entry for each. Look for `PASS` on every entry and `Result: PASS` at
+the end. This is the layout (the plan names are what matter; the keys read,
+documents read and milliseconds depend on your data and machine):
+
+```text
+Tenant "biteexpress", 500 restaurants.
+
+PASS  a city, best first
+        plan:     LIMIT > FETCH > IXSCAN(tenant_city_score)
+        returned: 21   keys read: 21   documents read: 21   1 ms
+PASS  nearest first
+        plan:     GEO_NEAR_2DSPHERE(tenant_location_2dsphere)
+        returned: 21   keys read: 21   documents read: 21   1 ms
+...
+Result: PASS (no query scans the whole collection)
+```
+
+A `FAIL` line means that query would read the whole collection (a `COLLSCAN`):
+an index is missing or was dropped. Restart the API (startup recreates the
+indexes) and run it again. `npm run test:int` runs the same check on the real
+queries, so a regression fails the tests before it reaches you.
+
+This check says nothing about how the plans behave with millions of restaurants;
+that needs its own measurement. One shape is expected to sort in memory: a city
+plus a cuisine reads that city's matching restaurants and sorts them, which at
+9,551 restaurants is a few dozen rows.
+
 ## 4. What happens when the API starts
 
 1. `ConfigModule` validates the environment against the Zod schema in
@@ -617,7 +828,7 @@ and `_id` as an `ObjectId`: the API names the coordinates `latitude` and
 4. `SchemaBootstrapService` runs `ensureRestaurantsSchema`:
    - creates the `restaurants` collection with its `$jsonSchema` validator
      (`strict`, `error`), or updates the validator if the collection exists;
-   - creates the four indexes by name (a no-op when they already exist);
+   - creates the five indexes by name (a no-op when they already exist);
    - asks for the Atlas Search index, and only logs a warning if the deployment
      cannot do search.
 5. Only now does the HTTP server start listening, so the first request always
@@ -627,7 +838,7 @@ and `_id` as an `ObjectId`: the API names the coordinates `latitude` and
 
 ## 5. Reading the `/ready` response
 
-`/ready` answers `200` when MongoDB responds and all four expected indexes
+`/ready` answers `200` when MongoDB responds and all five expected indexes
 exist. Otherwise it answers `503` with the same body, so a person can see why.
 Every check has a 2 second limit, so the endpoint cannot hang.
 
@@ -653,7 +864,7 @@ search falls back to the rule-based path (arrives with the search step).
 | API stops at startup: `already exists with a different definition` | An index was changed in code but the old one is still in the volume | `npm run db:reset` (deletes local data), then start again |
 | API stops at startup: `EADDRINUSE` on port 3000 | Another copy of the API (or the demo container) holds the port | Stop it, or change `PORT` in `.env` |
 | `/ready` is `503`, `mongodb.status` is `down` | MongoDB stopped or unreachable after the API started | `docker compose ps`; `docker compose start mongodb` |
-| `/ready` is `503`, `indexes.missing` lists names | An index was dropped, or the collection is new | Restart the API: startup recreates them |
+| `/ready` is `503`, `indexes.missing` lists names | An index was dropped, the collection is new, or a step added an index (Step 5 added `tenant_score`) | Restart the API: startup creates what is missing |
 | `/ready` is `200` but `search.status` is `UNAVAILABLE` or `MISSING` | The deployment has no search process, or the search index was not created | Look for the warning `Atlas Search index ... was not created` in the API log. Use the Atlas Local image, not a plain `mongo` image. Once the database is healthy, restart the API: startup asks for the search index again |
 | `/ready` is `200`, `search.status` `PENDING` or `BUILDING` | The search index is still building | Wait 10 to 60 seconds and ask again |
 | `curl` prints a progress table or asks for input | PowerShell's `curl` alias | Use `curl.exe` |
@@ -661,6 +872,9 @@ search falls back to the rule-based path (arrives with the search step).
 | `npm run test:int` was killed and left `biteexpress_it_...` databases behind | The cleanup step did not run | `npm run db:shell`, then `db.adminCommand({ listDatabases: 1 }).databases.map(d => d.name)` and `db.getSiblingDB('biteexpress_it_xxxx').dropDatabase()` for each leftover |
 | `docker compose exec ... /scripts/...` fails in Git Bash with a strange Windows path | Git Bash rewrites paths that start with `/` | Use the npm scripts (`npm run db:inspect`), or prefix the command with `MSYS_NO_PATHCONV=1` |
 | Database data seems gone | `npm run db:reset` or `docker compose down -v` was run | Expected: that deletes the volumes. Run `npm run import` again |
+| `GET /v1/restaurants` answers `400` with `Unknown parameter "..."` | A parameter name is misspelled or not supported | Read the name in the message; section 3.15 lists the parameters |
+| `GET /v1/restaurants` answers `200` with an empty `data` for a city you know exists | The restaurants were loaded for another tenant, the import has not run, or the name is spelled differently | `npm run db:inspect` shows what is loaded and for which tenant. Send the same `X-Tenant-Id` the import used (the default is `biteexpress`). Try `name=` with part of a restaurant's name |
+| `npm run db:explain` ends in `Result: FAIL` | A listing query would scan the whole collection | Restart the API so that startup recreates the indexes, then run it again. If it persists: `npm run db:reset` and import again |
 | `npm run import`: `The import stopped: Could not connect to MongoDB at ...` | The database is not running, or `MONGODB_URI` is wrong | `npm run db:up`; check `.env`. Nothing was written, so run it again |
 | `npm run import`: `Result: FAIL` and a `Rejected rows` list | A row broke a hard rule (for example an unknown country code or an empty name). Nothing is skipped silently | Read the ids and reasons. The other rows were written; fix the file and run again |
 | `npm run import`: `Result: FAIL` and a `Rows the database refused` list | The collection validator refused a document | The reason names the rule. The rest of the batch was written. Compare the document with `src/database/restaurants.collection.ts` |
@@ -683,7 +897,7 @@ lines of `npm run db:logs`, and the full API error.
 | `docker-compose.yml` | The `mongodb` service (Atlas Local, data volumes, port bound to 127.0.0.1), the `api` service for demo mode and the `importer` job (profile `tools`) |
 | `Dockerfile`, `.dockerignore` | Multi-stage build of the API image: compile, install production dependencies only, run as the non-root `node` user, health check on `/health` |
 | `src/config/env.schema.ts` | Every setting, its type, range and default |
-| `src/database/restaurants.collection.ts` | The restaurants validator, the four indexes and the search index definition, as plain data |
+| `src/database/restaurants.collection.ts` | The restaurants validator, the five indexes and the search index definition, as plain data |
 | `src/database/schema-bootstrap.ts` | Applies that definition to the database; repeatable and safe from several instances |
 | `src/database/schema-bootstrap.service.ts` | Runs the bootstrap once at startup, before the server listens |
 | `src/database/mongo-client.factory.ts` | Creates and connects the single `MongoClient`; masks passwords in errors |
@@ -693,11 +907,11 @@ lines of `npm run db:logs`, and the full API error.
 | `src/importer/` | The importer. `clean-row.ts` holds every cleaning rule, `import-restaurants.ts` batches and counts, `mongo-restaurant-sink.ts` builds the upserts, `import-report.ts` and `expected-report.ts` print and check the report, `import-cli.ts` reads the command line and `main.ts` is the entry point |
 | `src/importer/*.spec.ts` | Unit tests for each of those. `sample-data.spec.ts` cleans the committed sample for real and checks it against known numbers and the collection validator |
 | `data/` | The 500-row sample and `text-fixes.json`; `full/` is for the unzipped archive and is ignored by Git. `data/README.md` explains each file |
-| `scripts/mongosh/` | The scripts behind `npm run db:inspect` and `npm run db:validator-demo` |
+| `scripts/mongosh/` | The scripts behind `npm run db:inspect`, `npm run db:validator-demo` and `npm run db:explain` |
 | `src/http/` | Everything shared by the HTTP layer. `problem.ts` decides how every failure is reported (RFC 9457), `problem-details.filter.ts` writes it, `request-context.ts` gives each request an id and an access-log line, `zod-validation.pipe.ts` turns Zod errors into field errors, `tenant.ts` reads the tenant header, `api-prefix.ts` holds `v1` |
-| `src/restaurants/` | The restaurant resource. `create-restaurant.schema.ts` is the request contract, `build-restaurant.ts` turns a request into the stored document, `restaurant.resource.ts` turns a stored document into the answer, `restaurants.service.ts` holds the use cases, `restaurant.store.ts` is the storage port and `mongo-restaurant.store.ts` its MongoDB adapter, `restaurants.controller.ts` is the HTTP glue |
-| `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, the per-run test-database setup, `InMemoryRestaurantStore` and `restaurant-store.contract.ts` (the checks both stores must pass) |
-| `test/restaurants.e2e-spec.ts`, `test/restaurants.int-spec.ts` | Create and fetch through the whole HTTP stack with no database, and against a real MongoDB |
+| `src/restaurants/` | The restaurant resource. `create-restaurant.schema.ts` is the request contract, `build-restaurant.ts` turns a request into the stored document, `restaurant.resource.ts` turns a stored document into the answer, `restaurants.service.ts` holds the use cases, `restaurant.store.ts` is the storage port and `mongo-restaurant.store.ts` its MongoDB adapter, `restaurants.controller.ts` is the HTTP glue. For the listing: `list-query.schema.ts` is the contract of the query string, `list-criteria.ts` turns it into what the store is asked, `mongo-list-query.ts` builds the MongoDB query (pure, so it is unit-tested without a database), `restaurant.list-item.ts` shapes each answer, and `vocabulary*.ts` knows the tenant's cities and cuisines, and the other names of a city |
+| `test/support/` | `FakeDb` (stands in for MongoDB in e2e tests), the app builder, the per-run test-database setup, `InMemoryRestaurantStore`, `in-memory-listing.ts` (its independently written filtering and ordering) and `restaurant-store.contract.ts` (the checks both stores must pass) |
+| `test/restaurants.e2e-spec.ts`, `test/restaurants.int-spec.ts` | Create, fetch and list through the whole HTTP stack with no database, and against a real MongoDB |
 | `test/mongo.int-spec.ts` | Integration tests against a real MongoDB |
 | `test/importer.int-spec.ts` | Integration tests for the importer against a real MongoDB |
 | `test/support/zomato-rows.ts`, `test/support/json-schema-lite.ts` | A builder for CSV rows, and a small checker that says whether the collection validator would accept a document, so `npm test` can prove it without a database |
@@ -813,10 +1027,82 @@ lines of `npm run db:logs`, and the full API error.
   `npm run test:int`), so the stand-in cannot drift from the real thing.
 - **The tenant header is a demo.** See section 3.14. It is validated like any other
   input and documented as the part to replace with a credential.
+- **Listing parameters are explicit, and strictly checked.** The list accepts the
+  parameters of section 3.15 and nothing else: an unknown one is a 400, never
+  ignored, so a typo cannot return an unfiltered list that looks right. Every value
+  must be plain text before it is converted, so `?city[$ne]=x` cannot become a
+  MongoDB operator, and the name filter is escaped, so a dot in a search means a
+  dot. The tenant and `status: active` are added by the query builder, never by the
+  caller. Trade-off: less freedom than a query language; in return nothing a client
+  sends can change what the database is asked to do.
+- **"Best" means the weighted score.** A restaurant rated 4.9 by three people
+  should not outrank one rated 4.5 by three thousand. The default order uses the
+  stored weighted score (the importer's formula: the average pulled towards the
+  overall mean of 3.44 by the equivalent of 50 votes). The plain average stays
+  available (`sort=averageRating`, `minRating`) because people also ask for "4 or
+  more".
+- **Missing is not zero.** MongoDB sorts a missing value as the smallest, so
+  `sort=cost` would start with restaurants whose cost nobody knows and an
+  ascending rating sort would start with the unrated ones. The listing puts them
+  last when the sort runs highest first and leaves them out when it runs lowest
+  first.
+- **A cost is compared inside one currency.** The dataset prices a meal in local
+  currency (rupees, dirhams, pula), so a bare `maxCost=1000` would compare rupees
+  with pesos. Add `currency` to the filter; the API does not convert. Trade-off:
+  there is no exchange-rate source to trust, and a conversion would hide the unit
+  the data actually has.
+- **Offset paging with a ceiling, and no total.** A page has 50 restaurants at
+  most and an offset stops at 1,000, because MongoDB walks past every skipped
+  entry, so the cost of a deep page grows with the offset. `hasMore` comes from
+  asking for one row more than the page, which is free; a total would be a second
+  query on every request. Trade-off: an app cannot jump to page 500 or print "1 to
+  20 of 9,551". The next step, when a feed needs to scroll without limit, is
+  keyset paging; every order already ends in `_id`, which is what makes it possible.
+- **Pages do not shift.** Every order ends in `_id`, and reversing `order` reverses
+  the whole list, ties included. A restaurant is never shown twice, or skipped,
+  because two had the same score.
+- **The database measures distance.** `$geoNear` on a `2dsphere` index returns
+  nearest first with the distance in metres, and stops after one page, so the
+  application never loads restaurants to measure them. The index leads with
+  `tenantId` and the query carries it, so one tenant's search never reads another's
+  entries. A restaurant without coordinates cannot be near anything, so it is left
+  out, not guessed.
+- **Cities and cuisines are learned from the data.** Two aggregations list the
+  tenant's cities and cuisines with counts, cached for 60 seconds and reset when a
+  restaurant is created. This is how `city=gurugram` becomes `Gurgaon` and how the
+  search step will recognise "South Indian" inside a sentence. The few well-known
+  alternative city names are a short built-in table that applies only when the data
+  actually has one of the names. Trade-off: a cache to keep right; the alternative
+  is a hard-coded list that goes stale.
+- **A short browser cache for listings.** `private, max-age=15` absorbs the
+  repeated "restaurants near me" taps of one app during a rush without making the
+  server do the work again. Trade-off: a restaurant created a moment ago can be
+  missing for up to 15 seconds from an app that has the answer cached. Errors are
+  never cached.
+- **The response uses the brief's attributes in camelCase.** `Average Rating` is
+  `averageRating`, `Distance` is `distanceKm`. JSON clients expect camelCase; the
+  mapping is written in section 3.15. If a consumer needs the brief's exact
+  spelling, `restaurant.list-item.ts` is the one place to change.
+- **The plans are checked, not assumed.** `npm run db:explain` and the integration
+  test ask MongoDB for the plan of each listing query and fail on a collection
+  scan. A new filter that silently stops using its index becomes a failing test.
 
 ## 9. Not covered yet
 
-- The list endpoint (Step 5) and the search queries (Step 7) are not built yet.
+- The search endpoint with a free-text `q` (Step 7) is not built yet.
+- A listing has no total count, only `hasMore`, and an offset stops at 1,000.
+  Browsing deeper needs keyset paging.
+- A point with a sort other than distance and no `radiusKm` reads every restaurant
+  that has coordinates (about 9,000 here), then sorts them. That is fine at this
+  size; at millions such a query needs a default radius.
+- Restaurants at exactly the same point have the same distance, and MongoDB does
+  not promise an order among them, so their order can differ between pages.
+- The alternative names of a city (Gurugram, Bengaluru and so on) are a short
+  built-in table, not something to edit per tenant.
+- Cost filters compare within one currency; there is no conversion.
+- One query shape, a city plus a cuisine, sorts its matches in memory, because the
+  index for it does not end in `_id`. Changing an existing index needs a migration,
+  and a city's worth of restaurants is small.
 - Restaurants cannot be updated or deleted through the API; the brief asks for
   create and read only.
 - There is no authentication. The tenant comes from a header (demo only).

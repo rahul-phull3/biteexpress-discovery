@@ -1,19 +1,7 @@
 import { z } from 'zod';
 import { INDIA_BOUNDS, NAME_MAX_LENGTH } from '../importer/clean-row';
-import { collapseWhitespace } from '../importer/text';
+import { text } from './schema-fields';
 import { findCountryByIsoCode, supportedCountryCodes } from './supported-countries';
-
-/** Text with its whitespace collapsed (as the importer does), then 1 to `max` characters. */
-const text = (max: number) =>
-  z
-    .string()
-    .transform(collapseWhitespace)
-    .pipe(
-      z
-        .string()
-        .min(1, 'must not be empty')
-        .max(max, `must be at most ${max} characters`),
-    );
 
 const countryCode = z
   .string()

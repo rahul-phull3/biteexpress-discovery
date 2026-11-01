@@ -4,9 +4,11 @@
 //
 // They prove what the unit and e2e tests cannot: that the database accepts
 // every document the API builds, that the unique index is what turns a
-// repeated source into a 409, and that latitude and longitude really are
-// stored as GeoJSON with longitude first. Like the other integration tests
-// they use a throwaway database (see support/int-env.ts) and drop it at the end.
+// repeated source into a 409, that latitude and longitude really are stored as
+// GeoJSON with longitude first, that the listing queries (including $geoNear)
+// give the same answers as the in-memory stand-in, and that none of them scans
+// the whole collection. Like the other integration tests they use a throwaway
+// database (see support/int-env.ts) and drop it at the end.
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { MongoClient, ObjectId } from 'mongodb';
@@ -19,9 +21,14 @@ import { RESTAURANTS_COLLECTION } from '../src/database/restaurants.collection';
 import { ensureRestaurantsSchema } from '../src/database/schema-bootstrap';
 import { buildRestaurantDocument } from '../src/restaurants/build-restaurant';
 import { createRestaurantSchema } from '../src/restaurants/create-restaurant.schema';
+import type { ListCriteria } from '../src/restaurants/list-criteria';
+import { buildMongoListQuery, buildVocabularyPipelines, type MongoListQuery } from '../src/restaurants/mongo-list-query';
 import { MongoRestaurantStore } from '../src/restaurants/mongo-restaurant.store';
+import type { RestaurantListResponse } from '../src/restaurants/restaurant.list-item';
 import type { RestaurantResource } from '../src/restaurants/restaurant.resource';
 import {
+  aRestaurantDocument,
+  describeRestaurantListContract,
   describeRestaurantStoreContract,
   freshTenant,
 } from './support/restaurant-store.contract';
@@ -49,6 +56,146 @@ describeRestaurantStoreContract(
   'MongoRestaurantStore',
   () => new MongoRestaurantStore(db),
 );
+describeRestaurantListContract(
+  'MongoRestaurantStore',
+  () => new MongoRestaurantStore(db),
+);
+
+describe('the listing queries on real data', () => {
+  const tenant = freshTenant('plans');
+  const store = () => new MongoRestaurantStore(db);
+
+  const criteria = (overrides: Partial<ListCriteria> = {}): ListCriteria => ({
+    cuisineMatch: 'any',
+    sort: 'rating',
+    order: 'desc',
+    limit: 20,
+    offset: 0,
+    ...overrides,
+  });
+
+  /**
+   * What MongoDB says it will do with a query, as one piece of text. Only the
+   * stage names and index names in it are looked at, so the check does not depend
+   * on how the server version lays out the plan.
+   */
+  async function planOf(query: MongoListQuery): Promise<string> {
+    const collection = db.collection(RESTAURANTS_COLLECTION);
+    const explained =
+      query.kind === 'find'
+        ? await collection
+            .find(query.filter, { projection: query.projection })
+            .sort(query.sort)
+            .skip(query.skip)
+            .limit(query.limit)
+            .explain('queryPlanner')
+        : await collection.aggregate(query.pipeline).explain('queryPlanner');
+    return JSON.stringify(explained);
+  }
+
+  beforeAll(async () => {
+    const cities: Array<[string, number, number]> = [
+      ['Gurgaon', 28.4595, 77.0266],
+      ['Mumbai', 19.076, 72.8777],
+      ['Pune', 18.5204, 73.8567],
+    ];
+    const cuisines = [['South Indian'], ['North Indian', 'Mughlai'], ['Cafe', 'Italian'], ['Chinese']];
+    for (const [city, latitude, longitude] of cities) {
+      for (let index = 0; index < 20; index += 1) {
+        await store().insert(
+          aRestaurantDocument(tenant, {
+            name: `${city} Place ${index}`,
+            address: { line: null, locality: null, city, country: { code: 'IN', name: 'India' } },
+            location: {
+              type: 'Point',
+              coordinates: [longitude + index * 0.002, latitude + index * 0.002],
+            },
+            cuisines: cuisines[index % cuisines.length] ?? [],
+            rating: { average: 3 + (index % 10) / 5, votes: 10 * index, label: 'Good', score: 3 + (index % 10) / 5 },
+          }),
+        );
+      }
+    }
+  });
+
+  describe('use an index and never read the whole collection', () => {
+    const shapes: Array<[string, Partial<ListCriteria>]> = [
+      ['the default listing', {}],
+      ['a city, best first', { city: 'Gurgaon' }],
+      ['a city and a cuisine, best first', { city: 'Gurgaon', cuisines: ['South Indian'] }],
+      ['a country, best first', { countryCode: 'IN' }],
+      ['a rating bound', { minRating: 4 }],
+      ['a part of a name', { nameContains: 'place 1' }],
+      ['a price filter', { currency: 'INR', maxCost: 900 }],
+      ['the cheapest first', { sort: 'cost', order: 'asc' }],
+      ['by name', { sort: 'name', order: 'asc' }],
+      ['by city', { sort: 'city', order: 'asc' }],
+    ];
+
+    it.each(shapes)('%s', async (_label, overrides) => {
+      const plan = await planOf(buildMongoListQuery(tenant, criteria(overrides)));
+
+      expect(plan).not.toContain('COLLSCAN');
+      expect(plan).toContain('IXSCAN');
+    });
+
+    it('nearest first uses the 2dsphere index', async () => {
+      const near = { latitude: 28.4595, longitude: 77.0266 };
+
+      const plan = await planOf(buildMongoListQuery(tenant, criteria({ near, sort: 'distance', order: 'asc' })));
+
+      expect(plan).toContain('tenant_location_2dsphere');
+      expect(plan).not.toContain('COLLSCAN');
+    });
+
+    it('nearest first within a radius, ordered by rating, uses it too', async () => {
+      const near = { latitude: 28.4595, longitude: 77.0266, radiusKm: 5 };
+
+      const plan = await planOf(buildMongoListQuery(tenant, criteria({ near })));
+
+      expect(plan).toContain('tenant_location_2dsphere');
+      expect(plan).not.toContain('COLLSCAN');
+    });
+
+    it('the vocabulary reads the tenant through an index', async () => {
+      const { cities, cuisines } = buildVocabularyPipelines(tenant);
+      const collection = db.collection(RESTAURANTS_COLLECTION);
+
+      for (const pipeline of [cities, cuisines]) {
+        const plan = JSON.stringify(await collection.aggregate(pipeline).explain('queryPlanner'));
+        expect(plan).not.toContain('COLLSCAN');
+      }
+    });
+  });
+
+  it('reads the cities and cuisines it was given', async () => {
+    const vocabulary = await store().vocabulary(tenant);
+
+    expect(vocabulary.cities).toEqual([
+      { name: 'Gurgaon', count: 20 },
+      { name: 'Mumbai', count: 20 },
+      { name: 'Pune', count: 20 },
+    ]);
+    expect(vocabulary.cuisines.map((cuisine) => cuisine.name)).toEqual([
+      'Cafe',
+      'Chinese',
+      'Italian',
+      'Mughlai',
+      'North Indian',
+      'South Indian',
+    ]);
+  });
+
+  it('measures the distances the haversine formula gives, to 10 metres', async () => {
+    const near = { latitude: 28.4595, longitude: 77.0266 };
+
+    const result = await store().list(tenant, criteria({ near, sort: 'distance', order: 'asc', limit: 3 }));
+
+    // Each restaurant is 0.002 degrees further north and east than the one before.
+    expect(result.items.map((item) => item.doc.name)).toEqual(['Gurgaon Place 0', 'Gurgaon Place 1', 'Gurgaon Place 2']);
+    expect(result.items.map((item) => item.distanceKm)).toEqual([0, 0.3, 0.59]);
+  });
+});
 
 describe('documents built from API input (real MongoDB validator)', () => {
   const NOW = new Date('2026-11-01T10:30:00.000Z');
@@ -145,6 +292,51 @@ describe('the API on a real MongoDB', () => {
 
     expect(second.body).toMatchObject({ type: '/problems/conflict', errors: [{ pointer: '#/source' }] });
     expect(await restaurants().countDocuments({ tenantId: tenant })).toBe(1);
+  });
+
+  it('lists what was created: filters by city under another spelling, orders by distance, reports the distance', async () => {
+    const tenant = freshTenant('http');
+    const zambar = { ...body, name: 'Zambar', location: { latitude: 28.495, longitude: 77.089 }, rating: { average: 4, votes: 802 } };
+    const goli = {
+      name: 'Goli Vada Pav No. 1',
+      address: { city: 'New Delhi', countryCode: 'IN' },
+      location: { latitude: 28.6315, longitude: 77.2167 },
+      cuisines: ['Street Food'],
+    };
+    for (const restaurant of [body, zambar, goli]) {
+      await request(app.getHttpServer()).post('/v1/restaurants').set('X-Tenant-Id', tenant).send(restaurant).expect(201);
+    }
+
+    const gurugram = await request(app.getHttpServer())
+      .get('/v1/restaurants?city=gurugram&lat=28.495&lng=77.089')
+      .set('X-Tenant-Id', tenant)
+      .expect(200);
+    const everywhere = await request(app.getHttpServer())
+      .get('/v1/restaurants?lat=28.495&lng=77.089&radiusKm=10')
+      .set('X-Tenant-Id', tenant)
+      .expect(200);
+
+    const page = gurugram.body as RestaurantListResponse;
+    expect(page.data.map((item) => [item.name, item.distanceKm])).toEqual([
+      ['Zambar', 0],
+      ['Naivedhyam', 7.27],
+    ]);
+    expect(page.meta).toMatchObject({ sort: 'distance', order: 'asc' });
+    expect((everywhere.body as RestaurantListResponse).data.map((item) => item.name)).toEqual(['Zambar', 'Naivedhyam']);
+  });
+
+  it('sees a restaurant in a brand-new city at once, in any letter case', async () => {
+    const tenant = freshTenant('http');
+    await request(app.getHttpServer()).get('/v1/restaurants').set('X-Tenant-Id', tenant).expect(200);
+
+    await request(app.getHttpServer())
+      .post('/v1/restaurants')
+      .set('X-Tenant-Id', tenant)
+      .send({ name: 'Pune Place', address: { city: 'Pune', countryCode: 'IN' } })
+      .expect(201);
+    const res = await request(app.getHttpServer()).get('/v1/restaurants?city=PUNE').set('X-Tenant-Id', tenant).expect(200);
+
+    expect((res.body as RestaurantListResponse).data.map((item) => item.name)).toEqual(['Pune Place']);
   });
 
   it('keeps tenants apart: the other tenant gets a 404 for the same id', async () => {

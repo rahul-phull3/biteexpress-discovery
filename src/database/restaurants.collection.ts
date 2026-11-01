@@ -164,6 +164,13 @@ export const RESTAURANT_INDEXES: IndexDescription[] = [
       'rating.score': -1,
     },
   },
+  // Best first across the whole tenant: the default listing, and any filter
+  // that is not city or location (country, rating, price, delivery, ...).
+  // MongoDB reads it in order and stops once the page is full.
+  {
+    name: 'tenant_score',
+    key: { tenantId: 1, 'rating.score': -1, _id: 1 },
+  },
   // Makes imports safe to re-run and powers lookup by legacy id. Partial, so
   // restaurants without a source do not collide on a missing value.
   {
